@@ -1,0 +1,816 @@
+# =============================================================================
+#  PATRONES DE CORREO  -  este es el archivo que vas a tocar mas a menudo
+# =============================================================================
+#  Cada parser es declarativo: no hay que tocar Python para anadir un banco.
+#
+#  DONDE SE APLICA CADA REGEX  (importante al escribirlos):
+#    - amount, currency, date, time, operation, last4  ->  sobre el texto
+#      NORMALIZADO: asunto + cuerpo, en minusculas, sin tildes y TODO EN UNA
+#      SOLA LINEA (los saltos se colapsan a espacios).
+#    - merchant  ->  sobre el texto CRUDO, que SI conserva los saltos de linea.
+#      Esto importa porque los correos son tablas HTML: la etiqueta y su valor
+#      caen en lineas distintas. Por eso los patrones de comercio usan
+#      `Etiqueta\s*([^\n]+)`: el \s* se come el salto y [^\n]+ toma el valor.
+#
+#  ESTADO DE VERIFICACION:
+#    [OK]            verificado contra un correo REAL del usuario (set. 2026)
+#    [SIN DATOS]     escrito por deduccion, sin correo real que lo confirme
+#    [SIN VERIFICAR] suposicion tomada del proyecto legacy/, cuya calibracion
+#                    resulto mala. No fiarse hasta ver un correo autentico.
+#
+#  Para calibrar:  pantalla Correo -> Laboratorio de parsers.
+# =============================================================================
+version: 2
+
+# Remitentes que se buscan en Gmail. Son dominios, no direcciones sueltas:
+# asi un correo de phishing con "BCP" en el nombre visible no cuela.
+senders:
+  - notificacionesbcp.com.pe      # [OK] BCP: notificaciones@notificacionesbcp.com.pe
+  - yape.pe                       # [OK] Yape: notificaciones@yape.pe
+  - viabcp.com                    # [SIN DATOS] dominio antiguo de BCP, por si acaso
+  - bbva.com.pe                   # [OK] BBVA: procesos@bbva.com.pe
+  - bbva.pe                       # [SIN DATOS] por si usan otro dominio
+  - bbva.com                      # [SIN DATOS]
+
+# Palabras que descartan un correo antes de intentar parsearlo (promociones).
+global_skip:
+  - "estado de cuenta"
+  - "aprovecha"
+  - "descuento exclusivo"
+  - "sorteo"
+  - "encuesta"
+  - "cambia tu clave"
+  - "beneficios del mes"
+
+parsers:
+
+  # ======================================================================= YAPE
+  # Yape debita directo de la cuenta BCP y el BCP no manda un correo aparte,
+  # asi que ESTE correo es la unica notificacion del gasto. Por eso la cuenta
+  # es "BCP Debito" y lo que distingue al yapeo es el medio de pago.
+  - id: yape_envio
+    label: "Yape - envio de dinero"          # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: yape
+    # Un yapeo a una persona no dice para que fue, pero al menos sabemos que
+    # fue un pago a alguien. Es mejor que dejarlo en "Sin clasificar", y ademas
+    # permite agrupar todos los pagos a personas en el ranking de comercios.
+    category_hint: "Pago a persona"
+    priority: 5
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["yape.pe"]
+      body_any:
+        - "acabas de yapear"                 # texto real del correo
+        - "yapeaste"                         # [SIN VERIFICAR]
+        - "yapeo exitoso"
+      # Los pagos a comercio y de servicio tienen sus propios parsers: el
+      # comercio se extrae de otro sitio en cada uno.
+      skip_if_any:
+        - "tu pago en"
+        - "servicio fue yapeado"
+    extract:
+      amount:
+        - 'monto de yapeo\*?\s*s/\s*([\d.,]+)'
+        - 'monto total\s*s/\s*([\d.,]+)'
+        - 'yapeaste\s*(?:s/|pen)?\s*([\d.,]+)'
+        - '(?:s/|pen)\s*([\d.,]+)'
+      merchant:
+        - 'Nombre del Beneficiario\s*:?\s*([^\n]+)'
+        - 'yapeaste\s*(?:s/|pen)?\s*[\d.,]+\s+a\s+([^\n]{3,60}?)(?:\s+el\s+\d|\s*$)'
+      operation:
+        - 'n[°º]?\s*de operaci[oó]n(?:\s+yape)?\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+        - 'id de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+        - 'operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        # Yape escribe "03:38 p. m." con puntos y espacios.
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Yape pagando en un comercio (Pedidos Ya, etc). El comercio esta en la frase
+  # "Tu pago en X fue exitoso", no en un campo de la tabla.
+  - id: yape_pago_comercio
+    label: "Yape - pago en comercio"          # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: yape
+    priority: 5
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["yape.pe"]
+      body_any: ["tu pago en"]
+    extract:
+      amount:
+        - 'monto total\s*s/\s*([\d.,]+)'
+        - '(?:s/|pen)\s*([\d.,]+)'
+      merchant:
+        # OJO: "Titular" es el propio usuario, no el comercio. Nunca usarlo.
+        - 'Tu pago en\s+(.{2,60}?)\s+fue exitoso'
+      operation:
+        - 'id de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+        - 'n[°º]?\s*de operaci[oó]n(?:\s+yape)?\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Yape pagando un recibo (internet, luz...). Trae un bloque "Detalle del
+  # servicio" con la Empresa, que es el dato bueno.
+  - id: yape_servicio
+    label: "Yape - pago de servicio"          # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: yape
+    priority: 5
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["yape.pe"]
+      body_any:
+        - "servicio fue yapeado"
+        - "yapeo de servicio"
+    extract:
+      amount:
+        - 'monto total\s*s/\s*([\d.,]+)'
+        - '(?:s/|pen)\s*([\d.,]+)'
+      merchant:
+        # Los dos puntos son opcionales: el BCP escribe "Empresa" a secas y
+        # Yape "Empresa:". Sin el `:?` el patron capturaba los dos puntos.
+        - 'Empresa\s*:?\s*([^\n]+)'
+        # "Yapero(a)" y "Titular del servicio" son personas, no el comercio.
+      operation:
+        - 'n[°º]?\s*de operaci[oó]n(?:\s+yape)?\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+        - 'id de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Recarga de celular pagada con Yape. Es un gasto: compras saldo telefonico.
+  - id: yape_recarga
+    label: "Yape - recarga de celular"        # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: yape
+    category_hint: "Plan movil"
+    priority: 5
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["yape.pe"]
+      body_any: ["recarga en yape", "numero recargado", "recarga efectiva"]
+    extract:
+      amount:
+        # OBLIGATORIO anclar: el correo trae ademas "Valor de venta S/ 4.24" e
+        # "IGV 18% S/ 0.76", que son el desglose de la boleta, no lo que sale de
+        # tu cuenta. Cualquier patron generico se llevaria uno de esos.
+        - 'recarga efectiva\s*:?\s*(?:s/|pen)\s*([\d.,]+)'
+        - 'precio de venta\s*:?\s*(?:s/|pen)\s*([\d.,]+)'
+        - 'monto total\s*s/\s*([\d.,]+)'
+      merchant:
+        - 'Operadora\s*:?\s*([^\n]+)'
+      operation:
+        - 'n[°º]?\s*de operaci[oó]n(?:\s+yape)?\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: yape_recibido
+    label: "Yape - dinero recibido"          # [SIN DATOS] falta un correo real
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: yape
+    priority: 4
+    direction: ingreso
+    confidence: 0.85
+    match:
+      sender_any: ["yape.pe"]
+      body_any:
+        - "te yapearon"
+        - "acabas de recibir"
+        - "recibiste un yapeo"
+        - "recibiste un yape"                # [SIN VERIFICAR]
+    extract:
+      amount:
+        - 'monto\s*(?:del?\s*yapeo)?\*?\s*s/\s*([\d.,]+)'
+        - 'te yapearon\s*(?:s/|pen)?\s*([\d.,]+)'
+        - '(?:s/|pen)\s*([\d.,]+)'
+      merchant:
+        - 'Nombre del (?:Yapero|Remitente|Ordenante)\s*([^\n]+)'
+        - 'te yapearon\s*(?:s/|pen)?\s*[\d.,]+\s+(?:de|desde)\s+([^\n]{3,60}?)(?:\s+el\s+\d|\s*$)'
+      operation:
+        - 'n[°º]?\s*de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # ======================================================================== BCP
+  # Los correos de consumo del BCP son identicos para debito y credito salvo
+  # por el texto "Tarjeta de Debito" / "Tarjeta de Credito". Son dos parsers
+  # separados para que cada uno apunte a su cuenta.
+  - id: bcp_plin_persona
+    label: "BCP - pago a persona por Plin"           # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    # El BCP lo notifica como consumo con tarjeta, pero el dinero salio por
+    # Plin. Saber si pagas por Yape o por Plin dice de que cuenta sale tu dinero
+    # del dia a dia, asi que no da igual apuntarlo como "debito".
+    payment_method: plin
+    # Antes que bcp_consumo_debito (10): su correo es exactamente el mismo, y
+    # solo el descriptor "PLIN-" distingue el pago a una persona de una compra.
+    priority: 9
+    direction: gasto
+    confidence: 0.95
+    # Igual que un yapeo a una persona, el correo dice a quien pero no para que.
+    # Con esto se agrupan todos en "Pagos a personas" en vez de aparecer como
+    # diez comercios distintos que no significan nada.
+    category_hint: "Pago a persona"
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "plin-"
+    extract:
+      amount:
+        - 'total del consumo\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'consumo de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        # El "PLIN-" se queda fuera del grupo: el comercio es la persona, y asi
+        # la memoria de comercio aprende por persona y no por "plin paul de".
+        - 'Empresa\s*PLIN\s*-\s*([^\n]+)'
+        - 'D[eé]bito BCP en\s*PLIN\s*-\s*([^\n.]{3,60})'
+      last4:
+        - '\*{2,}\s*(\d{4})'
+        - 'termina(?:da|do)?\s*(?:en)?\s*[:\-]?\s*\*?(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bcp_bim_persona
+    label: "BCP - pago a persona por BIM"           # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    # El BCP lo notifica como consumo con tarjeta, pero el dinero salio por BIM,
+    # la billetera movil de la banca peruana. No es debito con tarjeta.
+    payment_method: otro
+    # Antes que bcp_consumo_debito (10): su correo es exactamente el mismo, y
+    # solo el descriptor "BIM-" distingue el pago a una persona de una compra.
+    priority: 8
+    direction: gasto
+    confidence: 0.95
+    # Igual que un yapeo a una persona, el correo dice a quien pero no para que.
+    # Con esto se agrupan todos en "Pagos a personas" en vez de aparecer como
+    # diez comercios distintos que no significan nada.
+    category_hint: "Pago a persona"
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "bim-"
+    extract:
+      amount:
+        - 'total del consumo\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'consumo de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        # El "BIM-" se queda fuera del grupo: el comercio es la persona, y asi
+        # la memoria de comercio aprende por persona y no por "bim milton douglas".
+        - 'Empresa\s*BIM\s*-\s*([^\n]+)'
+        - 'D[eé]bito BCP en\s*BIM\s*-\s*([^\n.]{3,60})'
+      last4:
+        - '\*{2,}\s*(\d{4})'
+        - 'termina(?:da|do)?\s*(?:en)?\s*[:\-]?\s*\*?(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bcp_consumo_debito
+    label: "BCP - consumo con tarjeta de debito"     # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: debito
+    priority: 10
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "consumo tarjeta de debito"
+        - "con tu tarjeta de debito"
+    extract:
+      amount:
+        # El BCP escribe los consumos en dolares con "$" a secas, no "US$".
+        - 'total del consumo\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'consumo de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        # "Empresa" es una fila de la tabla: es el dato limpio y fiable.
+        - 'Empresa\s*([^\n]+)'
+        - 'con tu Tarjeta de D[eé]bito BCP en\s*([^\n.]{3,60})'
+      last4:
+        - '\*{2,}\s*(\d{4})'
+        - 'termina(?:da|do)?\s*(?:en)?\s*[:\-]?\s*\*?(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bcp_consumo_credito
+    label: "BCP - consumo con tarjeta de credito"    # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Credito"
+    payment_method: credito
+    priority: 10
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "consumo tarjeta de credito"
+        - "con tu tarjeta de credito"
+    extract:
+      amount:
+        # El BCP escribe los consumos en dolares con "$" a secas, no "US$".
+        - 'total del consumo\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'consumo de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        - 'Empresa\s*([^\n]+)'
+        - 'con tu Tarjeta de Cr[eé]dito BCP en\s*([^\n.]{3,60})'
+      last4:
+        - '\*{2,}\s*(\d{4})'
+        - 'termina(?:da|do)?\s*(?:en)?\s*[:\-]?\s*\*?(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Red de seguridad: un consumo del BCP que no diga si fue debito o credito.
+  # No deberia ocurrir con las plantillas actuales, pero si el banco cambia el
+  # texto es preferible capturar el gasto con poca confianza (y que caiga en la
+  # bandeja de revision) a perderlo en silencio.
+  - id: bcp_consumo_generico
+    label: "BCP - consumo (tarjeta sin identificar)"   # [SIN DATOS] red de seguridad
+    bank: bcp
+    priority: 25
+    direction: gasto
+    confidence: 0.6                     # por debajo del umbral: va a revision
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "realizaste un consumo"
+        - "consumo con tu tarjeta"
+        - "compra por internet"
+    extract:
+      amount:
+        # El BCP escribe los consumos en dolares con "$" a secas, no "US$".
+        - 'total del consumo\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'consumo de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'por\s*(?:s/|us\$|usd|pen)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        - 'Empresa\s*([^\n]+)'
+        - '(?:s/|us\$|usd|pen)\s*[\d.,]+\s+en\s+([^\n.,]{3,60}?)(?:\s+el\s+\d|\s*$)'
+      last4:
+        - '\*{2,}\s*(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+        - 'operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Pagar tu propia tarjeta de credito NO es gasto: mueve plata de tu cuenta a
+  # tu tarjeta. El gasto ya se conto cuando usaste la tarjeta; contarlo otra vez
+  # aqui duplicaria todo el consumo del mes.
+  - id: bcp_pago_tarjeta_propia
+    label: "BCP - pago de tarjeta propia"     # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: transferencia
+    category_hint: "Pago de tarjeta"
+    priority: 7
+    direction: transferencia
+    confidence: 0.95
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "pago a tu tarjeta"
+        - "pago de tarjeta propia"
+    extract:
+      amount:
+        - 'monto pagado\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'pago a tu tarjeta de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      # Sin comercio: el "Pagado a" es tu propia tarjeta ("VISA Oro"), no un
+      # comercio. Extraerlo creaba seis movimientos a un comercio llamado "oro".
+      # A proposito SIN last4: los "**** 2222" que trae son los de la tarjeta
+      # de DESTINO. Usarlos haria que el movimiento saliera de la cuenta
+      # equivocada; el dinero sale de la cuenta sueldo.
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Mover plata entre cuentas propias NO es gasto. Prioridad alta (numero bajo)
+  # para que gane antes que el parser generico de transferencias.
+  - id: bcp_transferencia_propias
+    label: "BCP - transferencia entre mis cuentas"   # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: transferencia
+    priority: 8
+    direction: transferencia
+    confidence: 0.95
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "transferencia entre mis cuentas"
+        - "entre cuentas propias"
+    extract:
+      amount:
+        - 'monto transferido\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - 'transferencia de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      # Sin comercio: en un traspaso entre tus cuentas, el "Enviado a" es el
+      # nombre de tu propia cuenta ("Clasica"), no un comercio. Extraerlo daba
+      # veinticuatro movimientos a un comercio llamado "clasica".
+      last4:
+        # Hay dos "**** NNNN": origen y destino. Nos interesa el ORIGEN, que es
+        # de donde sale el dinero. El `*?` perezoso es lo que impide que el
+        # patron salte hasta el segundo (los regex de last4 corren sobre el
+        # texto ya aplanado en una sola linea).
+        - 'desde[^\n]*?\*{2,}\s*(\d{4})'
+        - '\*{2,}\s*(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bcp_transferencia
+    label: "BCP - transferencia a terceros / pago de servicio"  # [SIN DATOS]
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: transferencia
+    priority: 20
+    direction: gasto
+    confidence: 0.8
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "realizaste una transferencia"
+        - "constancia de transferencia"
+        - "transferencia exitosa"
+        - "pago de servicio"
+        - "pagaste tu recibo"
+    direction_if:
+      - any: ["abono en tu cuenta", "recibiste una transferencia", "deposito en tu cuenta"]
+        direction: ingreso
+      - any: ["pago de tarjeta", "pago de tu tarjeta"]
+        direction: transferencia
+    extract:
+      amount:
+        - 'monto transferido\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:monto|importe|total)\s*(?:transferido|pagado)?\s*[:\-]?\s*(?:s/|us\$|usd|pen)?\s*([\d.,]+)'
+        - 'transferencia de\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        # "Servicio" NO va aqui: casaba con el pie de todos los correos del BCP
+        # ("Servicio de Notificaciones BCP") y daba el comercio "de" a quince
+        # transferencias, que ademas encabezaban el ranking de gastos.
+        - '(?:Enviado a|Destinatario|Beneficiario|Empresa)\s*:?\s*([^\n]+)'
+      last4:
+        - '\*{2,}\s*(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bcp_retiro
+    label: "BCP - retiro de efectivo"        # [OK] verificado
+    bank: bcp
+    account_hint: "BCP Debito"
+    payment_method: debito
+    # Antes que bcp_consumo_debito (10). El correo del retiro dice "con tu
+    # Tarjeta de Debito BCP en un Cajero BCP", asi que el parser de consumos lo
+    # cazaba primero y lo apuntaba como gasto, con el comercio "un cajero bcp".
+    priority: 6
+    direction: transferencia                 # el dinero pasa a la cuenta Efectivo
+    confidence: 0.95
+    match:
+      sender_any: ["notificacionesbcp.com.pe", "viabcp.com"]
+      body_any:
+        - "realizaste un retiro"
+        - "total retirado"
+        - "retiro de efectivo"
+        - "retiraste"
+        - "disposicion de efectivo"
+    extract:
+      amount:
+        - 'total retirado\s*(?:s/|pen)\s*([\d.,]+)'
+        - '(?:retiro|retiraste)[^\n]*?(?:s/|pen)\s*([\d.,]+)'
+        - '(?:s/|pen)\s*([\d.,]+)'
+      # Sin comercio a proposito: sacar tu propio dinero de un cajero no es
+      # comprarle nada a nadie. Poner ahi "Cajero BCP" lo colaria en el ranking
+      # de "donde mas gastas" como si fuera una tienda.
+      last4:
+        - '\*{2,}\s*(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+
+  # ======================================================================= BBVA
+  # Plin es al BBVA lo que Yape al BCP: debita directo de la cuenta, asi que el
+  # gasto es de "BBVA Debito" y lo que lo distingue es el medio de pago.
+  - id: bbva_plin
+    label: "BBVA - Plin enviado"             # [OK] verificado
+    bank: bbva
+    account_hint: "BBVA Debito"
+    payment_method: plin
+    category_hint: "Pago a persona"          # un plineo no dice para que fue
+    priority: 12
+    direction: gasto
+    confidence: 0.95
+    match:
+      sender_any: ["bbva.com.pe", "bbva.pe"]
+      body_any: ["plineaste", "detalles de tu plineo"]
+    direction_if:
+      - any: ["te plinearon", "recibiste un plin"]
+        direction: ingreso
+    extract:
+      amount:
+        # Anclado a "Plineaste": el correo trae tambien "ITF: S/ 0.00" y un
+        # patron generico se quedaria con el cero.
+        - 'plineaste\s*(?:s/|pen)\s*([\d.,]+)'
+      merchant:
+        - 'Plineaste\s*(?:S/|PEN)\s*[\d.,]+\s+a\s+([^\n]{3,60})'
+        - 'Nombre del Beneficiario\s*([^\n]+)'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        # El BBVA escribe "5 de setiembre, 2026" con coma antes del anio.
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # Sacar plata del cajero NO es gastarla: pasa de la cuenta a tu bolsillo. El
+  # gasto ocurre despues, cuando la usas, y ese lo registras a mano.
+  - id: bbva_retiro_atm
+    label: "BBVA - retiro de efectivo en ATM"   # [OK] verificado
+    bank: bbva
+    account_hint: "BBVA Debito"
+    payment_method: debito
+    category_hint: "Retiro de efectivo"
+    priority: 12
+    direction: transferencia
+    confidence: 0.95
+    match:
+      sender_any: ["bbva.com.pe", "bbva.pe"]
+      body_any: ["retiro de efectivo", "constancia de retiro", "retiro en atm"]
+    extract:
+      amount:
+        # OBLIGATORIO anclar a "Monto de retiro": el correo trae ademas
+        # "Comision S/ 0.00", "ITF S/ 0.00" y "Saldo disponible S/ 250.40".
+        # Un patron generico se llevaria el cero o, peor, el saldo de la cuenta.
+        - 'monto de retiro\s*(?:s/|pen)\s*([\d.,]+)'
+      merchant:
+        # Los dos puntos son OBLIGATORIOS. Sin ellos, el asunto "Constancia de
+        # Retiro en ATM" hacia que el patron se comiera el salto de linea y
+        # capturara el saludo siguiente ("Hola, Carlos") como nombre del cajero.
+        - '\b(?:Cajero|Agente)\b\s*[:\-]\s*([^\n]+)'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # El BBVA manda DOS correos por un mismo retiro: la "Constancia de Retiro en
+  # ATM" y este. La deduplicacion los une (mismo importe, misma fecha, misma
+  # cuenta), pero hay que parsear los dos: a veces solo llega uno.
+  - id: bbva_cajero
+    label: "BBVA - operacion en cajero"       # [OK] verificado
+    bank: bbva
+    account_hint: "BBVA Debito"
+    payment_method: debito
+    category_hint: "Retiro de efectivo"
+    priority: 12
+    direction: transferencia
+    confidence: 0.9
+    match:
+      sender_any: ["bbva.com.pe", "bbva.pe", "bbva.com"]
+      body_any:
+        - "operacion en cajero"
+        - "cajeros automaticos"
+        - "numero de cajero"
+    extract:
+      amount:
+        # Este correo NO pone simbolo de moneda: "Importe 370.00" a secas. La
+        # moneda va en su propia fila ("Moneda PEN").
+        - 'importe\s*:?\s*(?:s/|us\$|usd|\$)?\s*([\d.,]+)'
+      currency:
+        - 'moneda\s*:?\s*(usd|d[oó]lares)'
+      merchant:
+        - 'N[uú]mero de cajero\s*:?\s*([^\n]+)'
+      last4:
+        # "Ultimos digitos de tarjeta *4444": un solo asterisco.
+        - 'ultimos d[ií]gitos de tarjeta\s*:?\s*\**\s*(\d{4})'
+        - '\*+\s*(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  # [SIN DATOS] Lo de abajo no esta verificado: falta un correo real de consumo
+  # con tarjeta del BBVA. Cuando llegue, pasalo por el laboratorio.
+  - id: bbva_pago_tarjeta_propia
+    label: "BBVA - pago de tu propia tarjeta"   # [OK] verificado
+    bank: bbva
+    account_hint: "BBVA Debito"
+    payment_method: transferencia
+    # Antes que bbva_consumo_tarjeta (30), cuyo body_any incluye "cargo" y se
+    # llevaria estos correos por delante.
+    priority: 12
+    # Pagar tu tarjeta NO es un gasto: el gasto fue el consumo que la tarjeta
+    # financio, y ya se conto cuando ocurrio. Contarlo otra vez al pagar el
+    # recibo duplica el mes entero.
+    direction: transferencia
+    confidence: 0.95
+    match:
+      sender_any: ["bbva.com.pe", "bbva.pe", "bbva.com"]
+      body_any:
+        - "pagar tarjetas propias"
+        - "pago de tarjetas propias"
+    extract:
+      amount:
+        # "Importe cargado" es lo que sale de la cuenta. El correo trae ademas
+        # "Importe transferido" y "Importe abonado", que aqui coinciden pero no
+        # tienen por que hacerlo si hubiera comision.
+        - 'importe cargado\s*(?:s/|us\$|usd|pen)\s*([\d.,]+)'
+        - 'importe transferido\s*(?:s/|us\$|usd|pen)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      last4:
+        # La cuenta de ORIGEN, que es de donde sale el dinero. El correo pone
+        # despues el numero de la tarjeta que se paga, y ese no interesa aqui.
+        - 'cuenta de origen\D{0,20}(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bbva_consumo_tarjeta
+    label: "BBVA - consumo con tarjeta"      # [OK] verificado
+    bank: bbva
+    account_hint: "BBVA Credito"
+    payment_method: credito
+    priority: 30
+    direction: gasto
+    confidence: 0.9
+    match:
+      sender_any: ["bbva.com.pe", "bbva.pe", "bbva.com"]
+      # Frases que SOLO salen en un aviso de operacion. Antes bastaba con que el
+      # correo dijera "consumo" o "compra", y con eso colaba cualquier promo:
+      # una del concierto de Arcangel entro como un gasto de S/1,000 porque su
+      # letra pequeña del TCEA menciona "un consumo de S/1,000 a 12 meses".
+      body_any:
+        - "has realizado el siguiente consumo"
+        - "has realizado un consumo"
+        - "realizo un consumo"
+        - "realizo una compra"
+        - "operacion con tu tarjeta"
+    skip_if_any:
+      - "retiro de efectivo"
+      - "plineaste"
+      - "cajeros automaticos"
+      # Marcas de correo comercial. Un aviso de operacion nunca lleva un enlace
+      # para darte de baja ni habla de preventas.
+      - "desuscribirte"
+      - "preventa"
+      - "tcea maxima referencial"
+    extract:
+      amount:
+        # El BBVA pone el comercio ANTES del importe, al reves que el BCP:
+        #   "El 29/08/2022 realizo un consumo en CAJE 2698 por S/ 50.00"
+        - 'consumo en .{2,60}? por\s*(?:s/|us\$|usd|pen)\s*([\d.,]+)'
+        - 'total del consumo\s*(?:s/|us\$|usd)\s*([\d.,]+)'
+        # El formato nuevo del BBVA no pone simbolo de moneda: es una tabla
+        # "Monto: 10.50 / Moneda: PEN". Sin esta linea, treinta y tres consumos
+        # reales coincidian con el parser y se descartaban por no hallar importe.
+        - 'monto\s*:\s*([\d.,]+)'
+        - '(?:por|de)\s*(?:s/|us\$|usd|pen)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        # "Moneda: USD" es la forma en que lo dice la tabla nueva.
+        - 'moneda\s*:\s*(usd|us\$)'
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        - '(?:Empresa|Establecimiento|Comercio)\s*:?\s*([^\n]+)'
+        - 'consumo en\s+(.{2,60}?)\s+por\s*(?:S/|US\$|USD)'
+        - '(?:s/|us\$|usd|pen)\s*[\d.,]+\s+en\s+([^\n.,]{3,60}?)(?:\s+con\s+tu|\s+el\s+\d|\s*$)'
+      last4:
+        # "Se cargara en su tarjeta terminada en **5555" (solo dos asteriscos)
+        - 'termina(?:da|do)?\s*(?:en)?\s*[:\-]?\s*\**\s*(\d{4})'
+        - '\*{2,}\s*(\d{4})'
+      operation:
+        - 'n[uú]?mero de operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+        - 'operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\.?,?\s+(?:de\s+)?\d{4})'
+      time:
+        - '(\d{1,2}:\d{2}(?::\d{2})?\s*(?:[ap]\s*\.?\s*m\s*\.?)?)'
+
+  - id: bbva_transferencia
+    label: "BBVA - transferencia / abono"    # [SIN DATOS]
+    bank: bbva
+    account_hint: "BBVA Debito"
+    payment_method: transferencia
+    priority: 40
+    direction: gasto
+    confidence: 0.75
+    match:
+      sender_any: ["bbva.com.pe", "bbva.pe", "bbva.com"]
+      body_any: ["transferencia", "abono", "deposito", "pago de servicio"]
+    skip_if_any:
+      - "retiro de efectivo"
+      - "plineaste"
+    direction_if:
+      - any: ["entre mis cuentas", "entre cuentas propias"]
+        direction: transferencia
+      - any: ["abono", "deposito en tu cuenta", "recibiste"]
+        direction: ingreso
+    extract:
+      amount:
+        - 'monto transferido\s*(?:s/|us\$|usd|\$)\s*([\d.,]+)'
+        - '(?:monto|importe|total)\s*[:\-]?\s*(?:s/|us\$|usd|pen)?\s*([\d.,]+)'
+        - '(?:por|de)\s*(?:s/|us\$|usd|pen)\s*([\d.,]+)'
+        - '(?:s/|us\$|usd)\s*([\d.,]+)'
+      currency:
+        - '(us\$|usd|d[oó]lares|\$\s*[\d])'
+      merchant:
+        - '(?:Enviado a|Destinatario|Beneficiario|Empresa)\s*([^\n]+)'
+      operation:
+        - 'operaci[oó]n\s*[:#\-]?\s*([a-z0-9\-]{4,})'
+      date:
+        - '(\d{1,2}\s+(?:de\s+)?[a-z]+\s+(?:de\s+)?\d{4})'
+        - '(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})'

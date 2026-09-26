@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+
+# Datos y secretos  (NUNCA subir)
+data/
+*.db
+*.sqlite3
+.env
+credentials.json
+token.json
+*.xlsx
+*.xlsm
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Secretos de OAuth
+secrets/*
+!secrets/.gitkeep
+!secrets/README.md
+
+# Artefactos de compilacion de TypeScript
+*.tsbuildinfo
+
+# Otros
+legacy/
+docs/
+.claude/
+AGENTS.md

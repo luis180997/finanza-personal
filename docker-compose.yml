@@ -1,0 +1,118 @@
+# =============================================================================
+#  Finanzas personales — un solo comando:  docker compose up -d --build
+# =============================================================================
+#  Dos servicios:
+#    web  → nginx. Sirve la interfaz y reenvia /api al backend. Unica puerta de
+#           entrada, en http://localhost:8080
+#    api  → FastAPI. No publica puerto al exterior: solo se llega por nginx.
+#
+#  Datos: bind mount a ./data, para tener el archivo SQLite a mano (copiarlo,
+#  abrirlo con DB Browser, respaldarlo sin comandos raros). Va DE LA MANO con
+#  `journal_mode=DELETE` en plataforma/db.py: WAL necesita bloqueos de archivo que un
+#  bind mount de Docker Desktop en Windows no garantiza, y ahi WAL no es mas
+#  lento, corrompe la base. Si algun dia esto corre sobre Linux o WSL2, vuelve a
+#  WAL. La carpeta ./data esta en .gitignore.
+#
+#  Secretos: ./secrets se monta en SOLO LECTURA. El token que genera la
+#  autorizacion se escribe en ./data, no ahi.
+# =============================================================================
+
+services:
+  api:
+    build:
+      context: ./backend
+    image: finanzas-api:local
+    restart: unless-stopped
+    expose:
+      - "8000"
+    environment:
+      # dev = documentacion interactiva en /api/docs.
+      # prod = apagada. Mientras no haya login, /api/docs deja disparar cualquier
+      # endpoint a quien llegue a la URL; ponlo en prod antes de exponer esto.
+      APP_ENV: ${APP_ENV:-dev}
+      TZ: ${TIMEZONE:-America/Lima}
+      TIMEZONE: ${TIMEZONE:-America/Lima}
+      BASE_CURRENCY: ${BASE_CURRENCY:-PEN}
+
+      DATA_DIR: /app/data
+      SECRETS_DIR: /app/secrets
+      DATABASE_URL: sqlite:////app/data/finanzas.db
+      GMAIL_CREDENTIALS_FILE: /app/secrets/credentials.json
+      GMAIL_TOKEN_FILE: /app/data/token.json
+
+      # nginx y el navegador comparten origen, asi que CORS no hace falta.
+      # Se deja vacio a proposito: cualquier origen extra hay que declararlo.
+      CORS_ORIGINS: ${CORS_ORIGINS:-}
+
+      # Se derivan de PUERTO_WEB para que no haya tres variables que mantener
+      # sincronizadas a mano. Solo tocas PUERTO_WEB; eso si, el URI resultante
+      # debe estar registrado igual en Google Cloud Console.
+      APP_BASE_URL: http://localhost:${PUERTO_WEB:-8080}
+      OAUTH_REDIRECT_URI: http://localhost:${PUERTO_WEB:-8080}/api/gmail/callback
+
+      # --- Lectura del correo ---
+      # imap  = contrasena de aplicacion de Google. No caduca, se configura en
+      #         dos minutos y es el modo por defecto.
+      # gmail = OAuth. Mas permisos finos, pero mientras la app este en
+      #         "Testing" el token caduca cada 7 dias.
+      EMAIL_BACKEND: ${EMAIL_BACKEND:-imap}
+      IMAP_HOST: ${IMAP_HOST:-imap.gmail.com}
+      IMAP_PORT: ${IMAP_PORT:-993}
+      IMAP_USER: ${IMAP_USER:-}
+      IMAP_PASSWORD: ${IMAP_PASSWORD:-}
+      IMAP_VERIFICAR_CERTIFICADO: ${IMAP_VERIFICAR_CERTIFICADO:-true}
+
+      GMAIL_LOOKBACK_DAYS: ${GMAIL_LOOKBACK_DAYS:-30}
+      # Lee el correo solo, cada N minutos. Es lo que hace que no tengas que
+      # entrar a pulsar nada.
+      SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
+      EMAIL_RETENTION_DAYS: ${EMAIL_RETENTION_DAYS:-90}
+
+      # --- Importar Excel ---
+      # Apagado por defecto: el Excel ya esta importado hasta el 31/08/2026 y otro
+      # con filas de setiembre en adelante duplicaria los gastos que traen los correos.
+      IMPORTAR_EXCEL_HABILITADO: ${IMPORTAR_EXCEL_HABILITADO:-false}
+
+      # --- Copias de seguridad ---
+      # Se copian en ./data/respaldos. Lo que cuenta es la fecha del ultimo
+      # respaldo, no una hora fija: si el equipo estuvo apagado, la copia sale al
+      # volver a encenderlo. 0 = sin respaldos automaticos (la copia previa a
+      # cambios de la base al arrancar se hace igual). RESPALDO_CONSERVAR son las
+      # mas recientes que se guardan siempre; ademas queda la ultima de cada dia,
+      # semana y mes (ver README).
+      RESPALDO_CADA_DIAS: ${RESPALDO_CADA_DIAS:-7}
+      RESPALDO_CONSERVAR: ${RESPALDO_CONSERVAR:-8}
+    volumes:
+      - ./data:/app/data
+      - ./secrets:/app/secrets:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/api/salud', timeout=4).status==200 else 1)"
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+  web:
+    build:
+      context: ./frontend
+    image: finanzas-web:local
+    restart: unless-stopped
+    ports:
+      # 127.0.0.1 a proposito: la aplicacion NO tiene login todavia, asi que
+      # solo escucha en esta maquina. Sin el prefijo, cualquiera en tu wifi
+      # entraria a tus finanzas escribiendo la IP del PC.
+      # Para abrirla a la red local: cambia a "${PUERTO_WEB:-8080}:80"
+      # (y antes, pon un login).
+      - "127.0.0.1:${PUERTO_WEB:-8080}:80"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3

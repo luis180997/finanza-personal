@@ -1,0 +1,192 @@
+@import "tailwindcss";
+
+/* ===========================================================================
+   Tokens de diseño.
+
+   Los colores de las series salen de una paleta categorica validada para
+   daltonismo (deltaE >= 8 entre pares adyacentes en proton/deuteran/tritan) y
+   para contraste sobre cada superficie. No cambies un hex suelto: la paleta se
+   valida como conjunto. Si cambias un hex del modo claro, cambialo tambien en
+   PALETA de components/charts.tsx: con esa lista se detectan los colores
+   repetidos entre categorias.
+
+   Las variables se declaran tres veces a proposito:
+     :root                      -> claro (por defecto)
+     @media prefers-color-scheme -> oscuro segun el sistema operativo
+     :root[data-theme="dark"]   -> oscuro forzado por el interruptor de la app
+   =========================================================================== */
+:root {
+  color-scheme: light;
+
+  --plano:        #f9f9f7;   /* fondo de pagina */
+  --superficie:   #ffffff;   /* tarjetas y superficie de los graficos */
+  --superficie-2: #f4f4f1;   /* filas alternas, chips */
+  --borde:        rgba(11, 11, 11, 0.10);
+  --borde-fuerte: #e1e0d9;
+
+  --tinta:        #0b0b0b;
+  --tinta-2:      #52514e;
+  --tinta-3:      #898781;
+
+  --rejilla:      #e1e0d9;
+  --eje:          #c3c2b7;
+
+  /* paleta categorica validada (slots 1-8, orden fijo) */
+  --serie-1: #2a78d6;  /* azul     */
+  --serie-2: #eb6834;  /* naranja  */
+  --serie-3: #1baf7a;  /* aqua     */
+  --serie-4: #eda100;  /* amarillo */
+  --serie-5: #e87ba4;  /* magenta  */
+  --serie-6: #008300;  /* verde    */
+  --serie-7: #4a3aa7;  /* violeta  */
+  --serie-8: #e34948;  /* rojo     */
+  --serie-otros: #898781;
+
+  /* estado: reservados, nunca se usan como "serie 9" */
+  --bien:     #0ca30c;
+  --aviso:    #fab219;
+  --serio:    #ec835a;
+  --critico:  #d03b3b;
+
+  --texto-bien:  #006300;
+  --texto-malo:  #b02a2a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+
+    --plano:        #0d0d0d;
+    --superficie:   #1a1a19;
+    --superficie-2: #232322;
+    --borde:        rgba(255, 255, 255, 0.10);
+    --borde-fuerte: #2c2c2a;
+
+    --tinta:        #ffffff;
+    --tinta-2:      #c3c2b7;
+    --tinta-3:      #898781;
+
+    --rejilla:      #2c2c2a;
+    --eje:          #383835;
+
+    --serie-1: #3987e5;
+    --serie-2: #d95926;
+    --serie-3: #199e70;
+    --serie-4: #c98500;
+    --serie-5: #d55181;
+    --serie-6: #008300;
+    --serie-7: #9085e9;
+    --serie-8: #e66767;
+    --serie-otros: #898781;
+
+    --texto-bien: #0ca30c;
+    --texto-malo: #e66767;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  --plano:        #0d0d0d;
+  --superficie:   #1a1a19;
+  --superficie-2: #232322;
+  --borde:        rgba(255, 255, 255, 0.10);
+  --borde-fuerte: #2c2c2a;
+
+  --tinta:        #ffffff;
+  --tinta-2:      #c3c2b7;
+  --tinta-3:      #898781;
+
+  --rejilla:      #2c2c2a;
+  --eje:          #383835;
+
+  --serie-1: #3987e5;
+  --serie-2: #d95926;
+  --serie-3: #199e70;
+  --serie-4: #c98500;
+  --serie-5: #d55181;
+  --serie-6: #008300;
+  --serie-7: #9085e9;
+  --serie-8: #e66767;
+  --serie-otros: #898781;
+
+  --texto-bien: #0ca30c;
+  --texto-malo: #e66767;
+}
+
+@theme inline {
+  --color-plano: var(--plano);
+  --color-superficie: var(--superficie);
+  --color-superficie-2: var(--superficie-2);
+  --color-borde: var(--borde);
+  --color-borde-fuerte: var(--borde-fuerte);
+  --color-tinta: var(--tinta);
+  --color-tinta-2: var(--tinta-2);
+  --color-tinta-3: var(--tinta-3);
+  --color-bien: var(--bien);
+  --color-aviso: var(--aviso);
+  --color-critico: var(--critico);
+  --color-serie-1: var(--serie-1);
+  --color-serie-2: var(--serie-2);
+  --font-sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--plano);
+  color: var(--tinta);
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Las columnas de numeros se alinean; los numeros grandes sueltos no. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--borde-fuerte);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+
+/* La lista desplegable de un <select> la dibuja el sistema operativo, no la
+   pagina. Al fijarle al select un fondo propio, el navegador dejaba de heredar
+   el esquema oscuro y pintaba las opciones con texto claro sobre fondo claro:
+   ilegibles. Hay que darles color explicito. */
+select option,
+select optgroup {
+  background-color: var(--superficie);
+  color: var(--tinta);
+}
+
+select optgroup {
+  color: var(--tinta-3);
+  font-weight: 600;
+}
+
+/* Foco visible siempre: se navega mucho con teclado al revisar movimientos. */
+:focus-visible {
+  outline: 2px solid var(--serie-1);
+  outline-offset: 2px;
+}
