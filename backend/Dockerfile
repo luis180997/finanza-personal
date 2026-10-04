@@ -26,7 +26,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY app ./app
 COPY scripts ./scripts
-COPY pyproject.toml ./
+COPY pyproject.toml alembic.ini ./
 
 # Usuario sin privilegios. /app/data se crea aqui con su propietario correcto:
 # Docker copia esos permisos al inicializar el volumen con nombre.

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterator
 
-from sqlalchemy import event
+from sqlalchemy import event, inspect
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.plataforma.config import settings
@@ -52,9 +52,10 @@ def _sqlite_pragmas(dbapi_conn, _):
 #                  copia del Excel recalculable desde el propio archivo.
 TABLAS_OBSOLETAS = ("excel_staging",)
 
-# Columnas anadidas despues de crear la tabla. `create_all` crea las tablas que
-# faltan, pero NO anade columnas a una tabla que ya existe: sin esto, una base
-# creada antes del cambio reventaria al leer el modelo nuevo.
+# Columnas anadidas despues de crear la tabla, de ANTES de Alembic. Solo se usan
+# para llevar una base vieja hasta la version 0001. CONGELADAS: un cambio de esquema
+# nuevo es una version en `migraciones_esquema/versions/`, no una linea aqui.
+# (Lo mismo vale para TABLAS_OBSOLETAS.)
 COLUMNAS_NUEVAS: dict[str, list[tuple[str, str]]] = {
     "transaction": [
         ("locked_by_user", "BOOLEAN NOT NULL DEFAULT 0"),
@@ -115,18 +116,40 @@ def _proteger_movimientos(conn) -> None:
     )
 
 
-def init_db() -> None:
-    registrar_tablas()
+def _completar_hasta_la_base() -> None:
+    """Lleva una base anterior a Alembic hasta la version 0001.
 
-    SQLModel.metadata.create_all(engine)
+    Es lo que hacia el arranque antes de Alembic, y no crece mas: los cambios nuevos
+    van en `migraciones_esquema/versions/`. Solo crea las tablas de la 0001 (no las
+    del modelo de hoy) para que una copia vieja restaurada no reciba tablas que una
+    version posterior crearia otra vez.
+    """
+    from app.plataforma.esquema import TABLAS_BASE
+
+    existentes = set(inspect(engine).get_table_names())
+    faltan = [SQLModel.metadata.tables[t] for t in TABLAS_BASE if t not in existentes]
+    if faltan:
+        SQLModel.metadata.create_all(engine, tables=faltan)
     with engine.begin() as conn:
         for tabla, columnas in COLUMNAS_NUEVAS.items():
-            existentes = set(_columnas(conn, tabla))
+            actuales = set(_columnas(conn, tabla))
             for nombre, definicion in columnas:
-                if nombre not in existentes:
+                if nombre not in actuales:
                     conn.exec_driver_sql(f'ALTER TABLE "{tabla}" ADD COLUMN "{nombre}" {definicion}')
         for tabla in TABLAS_OBSOLETAS:
             conn.exec_driver_sql(f'DROP TABLE IF EXISTS "{tabla}"')
+
+
+def init_db() -> None:
+    """Esquema al dia (Alembic) y triggers de proteccion, en ese orden."""
+    from app.plataforma import esquema
+
+    registrar_tablas()
+    if esquema.estado(engine) == "sin_versionar":
+        _completar_hasta_la_base()
+        esquema.marcar_como_base(engine)
+    esquema.actualizar(engine)
+    with engine.begin() as conn:
         if conn.dialect.name == "sqlite":
             _proteger_movimientos(conn)
 
@@ -138,8 +161,7 @@ def cambios_pendientes() -> list[str]:
     pendiente o si la base todavia no tiene movimientos que proteger. Crear tablas
     nuevas no cuenta: no toca nada de lo que ya existe.
     """
-    from sqlalchemy import inspect
-
+    from app.plataforma import esquema
     from app.plataforma.migraciones import MIGRACIONES
 
     inspector = inspect(engine)
@@ -148,11 +170,14 @@ def cambios_pendientes() -> list[str]:
         return []
 
     cambios = []
-    for tabla, columnas in COLUMNAS_NUEVAS.items():
-        if tabla in tablas:
-            existentes = {c["name"] for c in inspector.get_columns(tabla)}
-            cambios += [f"columna {tabla}.{n}" for n, _ in columnas if n not in existentes]
-    cambios += [f"tabla retirada {t}" for t in TABLAS_OBSOLETAS if t in tablas]
+    if esquema.estado(engine) == "sin_versionar":
+        cambios.append("esquema: pasa a Alembic (version 0001)")
+        for tabla, columnas in COLUMNAS_NUEVAS.items():
+            if tabla in tablas:
+                existentes = {c["name"] for c in inspector.get_columns(tabla)}
+                cambios += [f"columna {tabla}.{n}" for n, _ in columnas if n not in existentes]
+        cambios += [f"tabla retirada {t}" for t in TABLAS_OBSOLETAS if t in tablas]
+    cambios += [f"esquema {v}" for v in esquema.pendientes(engine)]
 
     hechas: set[str] = set()
     if "kv" in tablas:
