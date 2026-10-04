@@ -34,6 +34,10 @@ EXPENSE_TREE: list[tuple[str, str, str, Necessity | None, list[tuple[str, Necess
     ]),
     ("Transporte", "#eb6834", "car", ESE, [
         ("Transporte publico", ESE),
+        # Oct. 2026: el colectivo (auto compartido con ruta fija, informal) no es
+        # transporte publico ni taxi. Se paga en efectivo o por Yape a una persona,
+        # asi que no hay comercio que reconocer: se elige a mano.
+        ("Colectivo", ESE),
         ("Taxi", DIS),
         ("Combustible", ESE),
         ("Mantenimiento vehiculo", ESE),
