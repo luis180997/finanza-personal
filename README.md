@@ -12,10 +12,45 @@ categorías de dos niveles y un campo que mide lo que antes anotabas como
 - **Frontend**: React 19 · Vite · TypeScript · Tailwind 4 · Recharts
 - **Correo**: IMAP con contraseña de aplicación (o Gmail API OAuth). Lee cada 15 min, solo
 - **Despliegue**: Docker Compose · un solo comando · nginx como única puerta de entrada
+- **Arquitectura**: hexagonal por módulos · integridad de datos garantizada por la propia base · migraciones con Alembic · 191 pruebas
 
 > **Pendientes:** [`TODO.md`](TODO.md)
 > **Contexto completo del proyecto y decisiones de diseño:** [`docs/CONTEXTO.md`](docs/CONTEXTO.md)
 > **Cómo ajustar la lectura de correos:** [`docs/CALIBRAR_PARSERS.md`](docs/CALIBRAR_PARSERS.md)
+
+---
+
+## Arquitectura
+
+El backend está partido en módulos de negocio (`movimientos`, `clasificacion`, `correo`,
+`excel`, `analitica`, `seguimiento`), y todos tienen las mismas capas:
+
+```
+app/<modulo>/
+├── dominio/       reglas de negocio puras. No importa FastAPI ni SQL
+├── aplicacion/    casos de uso + puertos (lo que necesita de fuera, como interfaz)
+└── adaptadores/   entrada (API HTTP) · salida (SQLite, IMAP, Gmail, Excel) · fabrica.py
+```
+
+El dominio no conoce a nadie; los adaptadores conocen a todos. Lo común vive en
+`compartido/` (dinero, tipos, normalización de comercios, el corte histórico) y lo
+técnico en `plataforma/` (configuración, base de datos, migraciones con Alembic, respaldos).
+
+### Integridad de los datos
+
+Las reglas completas están en `AGENTS.md`. Lo esencial:
+
+- **Lo que el usuario decide no se pisa.** Un movimiento registrado, editado o revisado
+  a mano queda protegido (`locked_by_user`): ninguna sincronización, regla ni migración
+  lo vuelve a clasificar.
+- **La base de datos impide borrarlo**, no solo el código: un trigger rechaza el
+  `DELETE` de un movimiento protegido, y otro copia todo lo borrado a una papelera que
+  se restaura desde la interfaz.
+- **Una sola fuente de verdad por periodo.** Hasta el 31/08/2026 manda el Excel
+  histórico; desde el 01/09/2026, los correos y lo registrado a mano. La fecha vive en
+  un único sitio (`backend/app/compartido/corte.py`), así nada se cuenta dos veces.
+- **El dinero se guarda en céntimos enteros**, nunca en coma flotante.
+- **Las pruebas nunca tocan la base real**: `conftest.py` las aísla en una temporal.
 
 ---
 
@@ -72,7 +107,7 @@ En la carpeta **`./data/`** del propio proyecto, montada dentro del contenedor
 
 1. **Extraer el archivo para verlo con un programa visual (DBeaver o DB Browser for SQLite):**
    ```bash
-   docker cp proyecto-finanza_personal-api-1:/app/data/finanzas.db ./finanzas.db
+   docker compose cp api:/app/data/finanzas.db ./finanzas.db
    ```
 2. **Consultar directamente por terminal:**
    ```bash
@@ -100,7 +135,7 @@ arriba en todas las pantallas.
 
 - **Cada N días**, mirando la *fecha* de la última copia y no una hora fija: si el equipo
   estuvo apagado dos semanas, la copia sale en cuanto vuelve a encenderse.
-- **Antes de que el arranque cambie la base** (columnas nuevas, tablas retiradas,
+- **Antes de que el arranque cambie la base** (versiones de esquema pendientes,
   migraciones de datos). Si esa copia falla, la app no arranca.
 - **Antes de importar un Excel, de deshacer una importación** y de `scripts/datos_demo.py`.
 - **A mano:** botón *Hacer una copia ahora*, o `curl -X POST http://localhost:8080/api/respaldos`.
@@ -174,6 +209,33 @@ escritura, SQLite reintenta solo en vez de fallar.
 
 Sobre ext4 los bloqueos sí funcionan, y ahí **sí conviene volver a WAL**: cambia
 esa línea de `db.py`. Sobre Windows, no.
+
+### Cambiar la estructura de la base (Alembic)
+
+Las tablas y columnas se versionan con [Alembic](https://alembic.sqlalchemy.org/): cada
+cambio es un script numerado en `backend/app/plataforma/migraciones_esquema/versions/`,
+la base guarda en qué versión está (tabla `alembic_version`) y **al arrancar se aplican
+las que falten**, en orden, todas o ninguna.
+
+1. Cambia la entidad (por ejemplo, `backend/app/movimientos/dominio/entidades.py`).
+2. Genera la versión desde `backend/`:
+   ```bash
+   .venv/Scripts/alembic.exe revision --autogenerate -m "renombrar merchant a comercio"
+   ```
+3. **Revísala.** Autogenerate no sabe que un renombrado es un renombrado (lo escribe
+   como "quitar una columna y crear otra", que perdería los datos), así que los
+   renombrados y los cambios de forma se corrigen a mano dentro de
+   `op.batch_alter_table(...)`.
+4. `docker compose up -d --build`. El arranque copia la base, aplica la versión y
+   rehace los triggers de protección.
+
+Desde la terminal Alembic solo **escribe** versiones: `upgrade`, `downgrade` y `stamp`
+están bloqueados, porque se saltarían el respaldo previo y los triggers. Una prueba
+(`test_el_modelo_y_las_migraciones_dicen_lo_mismo`) falla si cambias una entidad y
+olvidas su versión.
+
+Los cambios de **datos** (renombrar una categoría, mover movimientos) van aparte, en
+`backend/app/plataforma/migraciones.py`.
 
 ### Cambiar el puerto
 
@@ -266,6 +328,12 @@ IMAP_PASSWORD=las16letras
 A partir de ahí lee tu correo **solo, cada 15 minutos**. No tienes que entrar a pulsar
 nada. Se ajusta con `SYNC_INTERVAL_MINUTES` (0 lo desactiva).
 
+**Privacidad:** pasados `EMAIL_RETENTION_DAYS` días (90 por defecto) se borra el *texto*
+de cada correo guardado. Se conserva su ficha (remitente, asunto y fecha), que es lo que
+impide procesarlo dos veces, y los movimientos ya extraídos no se tocan. Con `0` no se
+borra nunca: útil mientras se calibran los parsers, porque a un correo sin texto ya no
+se le puede aplicar un arreglo.
+
 ### ¿Por qué contraseña de aplicación y no OAuth?
 
 La API de Gmail parece más correcta —permiso de solo lectura, sin contraseñas— pero
@@ -308,7 +376,7 @@ derivadas y el backend las recalcula. Es idempotente (importar dos veces no dupl
 cada importación se deshace entera desde la misma pantalla.
 
 > El antiguo `scripts/importar_excel.py` se retiró en set. 2026: no respetaba el
-> interruptor ni el corte del 31/07 y podía duplicar gastos.
+> interruptor ni el corte de entonces (31/07) y podía duplicar gastos.
 
 ---
 
@@ -318,12 +386,15 @@ cada importación se deshace entera desde la misma pantalla.
 |---|---|
 | **Panel** | El resumen: cifras del periodo, ritmo de gasto, esencial vs. fuga, categorías, tendencia de 12 meses, rankings y alertas |
 | **Registrar gasto** | Alta manual con atajos. Es la puerta de entrada del efectivo |
-| **Movimientos** | Tabla con filtros. La categoría se cambia en la propia fila |
+| **Movimientos** | Tabla con filtros. La categoría se cambia en la propia fila. Incluye la papelera |
+| **Tendencia** | Cómo evolucionan tus ingresos y gastos a lo largo de los meses |
 | **Seguimiento** | Cortes de saldo real (cuánto hay en cada cuenta en una fecha) contra lo registrado: diferencia real, registrado, efecto del dólar y descuadre. Descuadre cerca de cero = no se te escapa ningún gasto. Gráficos por YTD, último año o todo (por defecto), con una estimación simple de los próximos meses (la tendencia de los cortes del último año). El historial se importa una vez desde el Excel de saldos; los cortes nuevos se registran en la propia pantalla |
-| **Por revisar** | Bandeja de triaje: baja confianza, sin categoría o posible duplicado |
+| **Por revisar** | Bandeja de triaje: lo que cambia una cifra y la app no puede decidir sola (comercio desconocido, posible duplicado, cobro en otra moneda) |
+| **Presupuesto** | Topes mensuales por categoría y meta de ahorro (opcionales) |
 | **Correo** | Estado de la conexión, sincronización, correos sin parsear y laboratorio de patrones |
+| **Importar Excel** | Solo aparece con `IMPORTAR_EXCEL_HABILITADO=true` |
 | **Reglas** | Tus reglas de clasificación, por prioridad |
-| **Cuentas** | Cuentas y últimos 4 dígitos (así se sabe de qué tarjeta salió cada consumo) |
+| **Cuentas y copias** | Cuentas y últimos 4 dígitos de cada tarjeta, categorías, y el estado de los respaldos |
 
 ---
 
@@ -333,8 +404,10 @@ cada importación se deshace entera desde la misma pantalla.
 cd backend && .venv/Scripts/python.exe -m pytest -q
 ```
 
-21 pruebas: parsers de correo, flujo completo de la API, idempotencia de la ingesta,
-deduplicación cruzada, agregaciones y aprendizaje por corrección.
+191 pruebas: parsers de correo contra el texto de correos reales, flujo completo de la
+API, idempotencia de la ingesta, deduplicación cruzada, protección de los datos del
+usuario (triggers y papelera), migraciones de datos y de esquema, respaldos, agregaciones y aprendizaje por
+corrección. Corren siempre sobre una base temporal, nunca sobre `data/finanzas.db`.
 
 ```bash
 cd frontend && npm run typecheck
@@ -347,7 +420,8 @@ cd frontend && npm run typecheck
 - **El dinero se guarda en céntimos enteros.** Nunca en coma flotante.
 - **Las transferencias no son gastos.** Pagar la tarjeta o recargar Yape mueve dinero
   entre tus bolsillos; no lo gasta. Queda fuera de todos los totales.
-- **Nada se borra solo.** Un posible duplicado se marca para que lo revises tú.
+- **Nada se borra solo.** Un posible duplicado se marca para que lo revises tú, y lo que
+  borras va a la papelera.
 - **Cada corrección enseña al sistema.** Si cambias la categoría de un comercio, la
   próxima vez la acierta.
 - **No hay login.** Sirve solo en `localhost`. Antes de exponerlo por VPN, lee la
