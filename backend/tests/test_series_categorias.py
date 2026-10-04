@@ -153,3 +153,51 @@ def test_filtrar_por_categoria_desglosa_sus_subcategorias(cliente):
     assert [s["nombre"] for s in arbol[1]["subcategorias"]] == ["Delivery", "Almuerzo"]
 
     assert cliente.get(SERIES, params={**params, "categoria": 999999}).status_code == 404
+
+
+# ------------------------------------------------- ritmo de gasto: real y proyeccion
+def _gasto_del_dia(dia: int, soles: int):
+    from types import SimpleNamespace
+
+    from app.compartido.tipos import Direction
+    return SimpleNamespace(direction=Direction.gasto, booking_date=date(2026, 10, dia),
+                           amount_cents=soles * 100)
+
+
+def test_el_ritmo_no_dibuja_los_dias_que_no_han_llegado():
+    """Antes el acumulado seguia hasta fin de mes repitiendo el ultimo valor: una
+    linea plana, como si ya no se fuera a gastar nada. Ahora el real se corta en hoy
+    y desde hoy sigue la proyeccion al ritmo historico."""
+    from app.analitica.dominio.calculos import serie_diaria
+    from app.analitica.dominio.periodos import rango_mes
+
+    octubre = rango_mes(2026, 10)
+    serie = serie_diaria([_gasto_del_dia(1, 100), _gasto_del_dia(3, 50)], octubre,
+                         hoy=date(2026, 10, 3), ritmo_total=1000, dias_historial=90)
+
+    assert len(serie) == 31
+    assert [p["acumulado"] for p in serie[:3]] == [100, 100, 150]
+    assert all(p["acumulado"] is None for p in serie[3:])        # el 4 aun no llego
+    assert [p["proyeccion"] for p in serie[:2]] == [None, None]
+    assert serie[2]["proyeccion"] == 150                         # se une al real hoy
+    assert serie[30]["proyeccion"] == 150 + 10 * 28              # S/ 10 diarios, 28 dias
+
+
+def test_sin_historial_suficiente_no_se_inventa_la_proyeccion():
+    from app.analitica.dominio.calculos import serie_diaria
+    from app.analitica.dominio.periodos import rango_mes
+
+    serie = serie_diaria([_gasto_del_dia(1, 100)], rango_mes(2026, 10),
+                         hoy=date(2026, 10, 3), ritmo_total=1000, dias_historial=5)
+    assert all(p["proyeccion"] is None for p in serie)
+    assert serie[5]["acumulado"] is None
+
+
+def test_un_mes_cerrado_es_todo_real_y_sin_proyeccion():
+    from app.analitica.dominio.calculos import serie_diaria
+    from app.analitica.dominio.periodos import rango_mes
+
+    serie = serie_diaria([_gasto_del_dia(1, 100)], rango_mes(2026, 10),
+                         hoy=date(2026, 11, 15), ritmo_total=1000, dias_historial=90)
+    assert serie[30]["acumulado"] == 100
+    assert all(p["proyeccion"] is None for p in serie)

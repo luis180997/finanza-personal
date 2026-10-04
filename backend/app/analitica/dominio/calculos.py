@@ -97,7 +97,19 @@ def kpis(movs, gastos, ingresos, gastos_prev, gastos_comparables, ingresos_compa
     }
 
 
-def serie_diaria(movs, rango: Rango) -> list[dict]:
+def serie_diaria(movs, rango: Rango, hoy: date, ritmo_total: float,
+                 dias_historial: int) -> list[dict]:
+    """Un punto por dia del periodo.
+
+    `acumulado` es el gasto real y se corta en `hoy`: los dias que aun no han
+    llegado van en null. Antes seguia hasta fin de mes repitiendo el ultimo valor,
+    y la grafica dibujaba una linea plana como si ya no se fuera a gastar nada.
+
+    `proyeccion` sigue desde `hoy` hasta el cierre al ritmo historico (el mismo que
+    la cifra "proyeccion al cierre" de kpis), y empieza en el acumulado de hoy para
+    que las dos lineas se unan. Null si no hay historial suficiente para proyectar o
+    si el periodo ya termino.
+    """
     por_dia: dict[date, dict[str, int]] = defaultdict(lambda: {"gasto": 0, "ingreso": 0})
     for t in movs:
         if t.direction == Direction.gasto:
@@ -105,16 +117,24 @@ def serie_diaria(movs, rango: Rango) -> list[dict]:
         elif t.direction == Direction.ingreso:
             por_dia[t.booking_date]["ingreso"] += t.amount_cents
 
-    serie, acumulado = [], 0
+    proyectar = dias_historial >= MINIMO_HISTORIAL_DIAS and rango.desde <= hoy < rango.hasta
+    serie, acumulado, acumulado_hoy = [], 0, 0
     dia = rango.desde
     while dia <= rango.hasta:
         valores = por_dia.get(dia, {"gasto": 0, "ingreso": 0})
         acumulado += valores["gasto"]
+        if dia == hoy:
+            acumulado_hoy = acumulado
+        futuro = dia > hoy
         serie.append({
             "fecha": dia.isoformat(),
-            "gasto": to_amount(valores["gasto"]),
-            "ingreso": to_amount(valores["ingreso"]),
-            "acumulado": to_amount(acumulado),
+            "gasto": None if futuro else to_amount(valores["gasto"]),
+            "ingreso": None if futuro else to_amount(valores["ingreso"]),
+            "acumulado": None if futuro else to_amount(acumulado),
+            "proyeccion": (
+                to_amount(int(acumulado_hoy + ritmo_total * (dia - hoy).days))
+                if proyectar and dia >= hoy else None
+            ),
         })
         dia += timedelta(days=1)
     return serie

@@ -12,12 +12,13 @@
 import { useState } from "react";
 import {
   Area,
-  AreaChart,
   Bar,
   BarChart,
   CartesianGrid,
+  ComposedChart,
   Cell,
   LabelList,
+  Line,
   Legend,
   ReferenceLine,
   ResponsiveContainer,
@@ -67,7 +68,7 @@ function tooltip(formatearEtiqueta?: (v: string) => string) {
         <div className="mb-1 font-medium">
           {formatearEtiqueta && titulo ? formatearEtiqueta(titulo) : titulo}
         </div>
-        {payload.map((p, i) => (
+        {payload.filter((p) => p.value !== null && p.value !== undefined).map((p, i) => (
           <div key={i} className="flex items-center gap-2">
             <span aria-hidden className="h-2 w-2 rounded-full" style={{ background: p.color }} />
             <span className="text-[var(--tinta-2)]">{String(p.name ?? "")}</span>
@@ -92,7 +93,7 @@ export function GraficoRitmo({
   return (
     <div className="h-64 w-full">
       <ResponsiveContainer width="100%" height="100%">
-        <AreaChart data={serie} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
+        <ComposedChart data={serie} margin={{ top: 8, right: 12, bottom: 0, left: -12 }}>
           <defs>
             <linearGradient id="degradadoGasto" x1="0" y1="0" x2="0" y2="1">
               <stop offset="0%" stopColor="var(--serie-2)" stopOpacity={0.28} />
@@ -144,7 +145,20 @@ export function GraficoRitmo({
             fill="url(#degradadoGasto)"
             activeDot={{ r: 4, strokeWidth: 2, stroke: "var(--superficie)" }}
           />
-        </AreaChart>
+          {/* Los dias que faltan: discontinua y sin relleno, para que no se lea
+              como gasto que ya ocurrio. */}
+          <Line
+            type="linear"
+            dataKey="proyeccion"
+            name="Proyeccion"
+            stroke="var(--serie-2)"
+            strokeWidth={2}
+            strokeDasharray="5 5"
+            strokeOpacity={0.6}
+            dot={false}
+            activeDot={{ r: 3 }}
+          />
+        </ComposedChart>
       </ResponsiveContainer>
     </div>
   );

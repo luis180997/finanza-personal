@@ -138,9 +138,13 @@ export interface Kpis {
 
 export interface PuntoDiario {
   fecha: string;
-  gasto: number;
-  ingreso: number;
-  acumulado: number;
+  /** null en los dias que aun no han llegado. */
+  gasto: number | null;
+  ingreso: number | null;
+  /** Gasto real acumulado; null despues de hoy. */
+  acumulado: number | null;
+  /** Desde hoy hasta el cierre, al ritmo historico; null si no se proyecta. */
+  proyeccion: number | null;
 }
 
 export interface Corte {

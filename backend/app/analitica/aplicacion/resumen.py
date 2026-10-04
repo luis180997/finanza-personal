@@ -104,7 +104,7 @@ class ServicioAnalitica:
             "kpis": kpis(movs, gastos_cents, ingresos_cents, gastos_prev,
                          gastos_comparables, ingresos_comparables, mismos_dias is not None,
                          rango, dias_transcurridos, total_ritmo, dias_historial, hoy),
-            "serie_diaria": serie_diaria(movs, rango),
+            "serie_diaria": serie_diaria(movs, rango, hoy, total_ritmo, dias_historial),
             "por_categoria": por_categoria(movs, categorias, gastos_cents),
             "por_subcategoria": por_subcategoria(movs, categorias, gastos_cents),
             "por_necesidad": por_necesidad(movs, gastos_cents),
