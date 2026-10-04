@@ -59,11 +59,6 @@ class Settings(BaseSettings):
     # A donde vuelve el navegador despues de aceptar el consentimiento.
     app_base_url: str = "http://localhost:5173"
 
-    # LLM opcional
-    llm_fallback_enabled: bool = False
-    anthropic_api_key: str = ""
-    llm_model: str = "claude-haiku-4-5-20251001"
-
     # Importar Excel: apagado por defecto. Hasta el 31/08/2026 la fuente de verdad
     # es el Excel y ya esta importado; desde el 01/09/2026 lo son los correos y los
     # registros manuales. Importar otro Excel con filas de agosto en adelante

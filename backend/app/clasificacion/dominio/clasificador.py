@@ -10,10 +10,6 @@ como `confirmada` o cae a la cola `por_revisar`.
   3. DICCIONARIO SEMILLA  -> comercios peruanos frecuentes, para el arranque en frio.
   4. FALLBACK             -> "Sin clasificar" + revision manual.
 
-La capa 5 (LLM) es opcional y solo se invoca para comercios que ninguna de las
-anteriores reconocio. Esta apagada por defecto: cuesta dinero y latencia, y el
-95% del trafico lo resuelven las capas 1-3.
-
 Quien recorre las capas es el caso de uso (aplicacion/clasificar.py), porque cada
 una necesita datos de la base. Aqui vive lo que no la necesita.
 """

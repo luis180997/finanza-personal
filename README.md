@@ -14,7 +14,6 @@ categorías de dos niveles y un campo que mide lo que antes anotabas como
 - **Despliegue**: Docker Compose · un solo comando · nginx como única puerta de entrada
 - **Arquitectura**: hexagonal por módulos · integridad de datos garantizada por la propia base · migraciones con Alembic · 191 pruebas
 
-> **Pendientes:** [`TODO.md`](TODO.md)
 > **Contexto completo del proyecto y decisiones de diseño:** [`docs/CONTEXTO.md`](docs/CONTEXTO.md)
 > **Cómo ajustar la lectura de correos:** [`docs/CALIBRAR_PARSERS.md`](docs/CALIBRAR_PARSERS.md)
 
@@ -155,7 +154,7 @@ La copia es segura con la app en marcha: usa la API de backup de SQLite, escribe
 temporal, lo verifica con `PRAGMA integrity_check` y solo entonces le pone nombre.
 
 > Las copias están en el mismo disco que la base. Para tenerlas también fuera del equipo,
-> el proyecto va dentro de OneDrive (pendiente en [TODO.md](TODO.md)).
+> el proyecto va dentro de OneDrive.
 
 **Restaurar** — siempre con la app parada; si no, puede escribir encima de la copia:
 
