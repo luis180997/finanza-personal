@@ -750,7 +750,7 @@ Fecha y hora
 Comision
 S/ 0.00
 Numero de operacion
-000000000425""",
+000000000777""",
         received_at=datetime(2026, 9, 12, 9, 30),
     )
     cajero = RawEmail(
