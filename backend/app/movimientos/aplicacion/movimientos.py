@@ -137,6 +137,21 @@ class ServicioMovimientos:
         self.uow.refrescar(tx)
         return tx
 
+    def marcar_revisado(self, tx_id: int) -> Transaction:
+        """Lo revisaste y esta bien: queda protegido y con la fecha de hoy, sin
+        cambiar nada mas."""
+        tx = self.repo.obtener(tx_id)
+        if not tx:
+            raise NoEncontrado("Movimiento no encontrado")
+        proteger(tx, reloj.ahora_utc())
+        self.repo.agregar(tx)
+        self.uow.confirmar()
+        self.uow.refrescar(tx)
+        return tx
+
+    def ultimo_tocado(self) -> Transaction | None:
+        return self.repo.ultimo_tocado()
+
     def editar_lote(
         self,
         ids: list[int],

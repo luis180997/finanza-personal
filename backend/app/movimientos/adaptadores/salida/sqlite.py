@@ -111,6 +111,14 @@ class MovimientosSqlite:
             .limit(limite)
         ).all())
 
+    def ultimo_tocado(self) -> Transaction | None:
+        return self.session.exec(
+            select(Transaction)
+            .where(col(Transaction.user_edited_at).is_not(None))
+            .order_by(col(Transaction.user_edited_at).desc())
+            .limit(1)
+        ).first()
+
     def pagina(
         self, filtros: FiltrosMovimientos, pagina: int, tamano: int, orden: str,
     ) -> PaginaDeMovimientos:

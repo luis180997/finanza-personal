@@ -66,6 +66,9 @@ class RepositorioMovimientos(Protocol):
 
     def por_revisar(self, limite: int) -> list[Transaction]: ...
 
+    def ultimo_tocado(self) -> Transaction | None:
+        """El ultimo que registraste, corregiste, revisaste o descartaste tu."""
+
 
 class RepositorioCuentas(Protocol):
     def ordenadas(self) -> list[Account]: ...

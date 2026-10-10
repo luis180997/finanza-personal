@@ -24,6 +24,7 @@ from app.movimientos.aplicacion.movimientos import ServicioMovimientos
 from app.movimientos.aplicacion.papelera import ServicioPapelera
 from app.movimientos.aplicacion.puertos import FiltrosMovimientos
 from app.movimientos.dominio import revision
+from app.movimientos.dominio.papelera import utc_iso
 from app.movimientos.dominio.entidades import Transaction
 from app.plataforma.config import settings
 from app.plataforma.db import get_session
@@ -143,6 +144,21 @@ def editar(
     tx_id: int, datos: TransactionPatch, servicio: ServicioMovimientos = Depends(_movimientos),
 ):
     return _salida(servicio, servicio.editar(tx_id, datos.model_dump(exclude_unset=True)))
+
+
+@router.post("/movimientos/{tx_id}/revisado", response_model=TransactionOut, tags=["movimientos"])
+def marcar_revisado(tx_id: int, servicio: ServicioMovimientos = Depends(_movimientos)):
+    """Lo revisaste y esta bien: queda protegido y con fecha, sin cambiar nada."""
+    return _salida(servicio, servicio.marcar_revisado(tx_id))
+
+
+@router.get("/movimientos/ultima-modificacion", tags=["movimientos"])
+def ultima_modificacion(servicio: ServicioMovimientos = Depends(_movimientos)):
+    """El ultimo movimiento que tocaste y cuando: desde ahi sigue lo que falta validar."""
+    tx = servicio.ultimo_tocado()
+    if tx is None:
+        return None
+    return {"momento": utc_iso(tx.user_edited_at), "movimiento": _salida(servicio, tx)}
 
 
 @router.post("/movimientos/lote", tags=["movimientos"])

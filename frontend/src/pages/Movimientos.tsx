@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ChevronLeft, ChevronRight, Search, Trash2 } from "lucide-react";
+import { Check, ChevronLeft, ChevronRight, Search, Trash2 } from "lucide-react";
 import { api } from "../lib/api";
 import type { Categoria, Movimiento } from "../lib/api";
 import { useParametros } from "../components/filtros";
@@ -8,6 +8,7 @@ import { PestanasMovimientos, VistaDescartados, VistaPapelera } from "../compone
 import type { VistaMovimientos } from "../components/papelera";
 import {
   ETIQUETA_ORIGEN,
+  fecha,
   fechaHora,
   importe,
   primerDiaDelAnio,
@@ -114,6 +115,17 @@ export default function Movimientos() {
       qc.invalidateQueries({ queryKey: ["movimientos"] });
       qc.invalidateQueries({ queryKey: ["resumen"] });
     },
+  });
+
+  const revisar = useMutation({
+    mutationFn: api.marcarRevisado,
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["movimientos"] }),
+  });
+
+  // Va bajo la clave "movimientos": cualquier cambio de esta pagina la refresca.
+  const { data: ultima } = useQuery({
+    queryKey: ["movimientos", "ultima-modificacion"],
+    queryFn: api.ultimaModificacion,
   });
 
   const mesActualInicio = primerDiaDelMes();
@@ -381,6 +393,25 @@ export default function Movimientos() {
         </div>
       </Tarjeta>
 
+      {ultima && (
+        <p className="mb-2 text-xs text-[var(--tinta-3)]">
+          Tu última modificación:{" "}
+          <span className="font-medium text-[var(--tinta-2)]">{fechaHora(ultima.momento)}</span>, en{" "}
+          <button
+            type="button"
+            onClick={() => {
+              const dia = new Date(`${ultima.movimiento.occurred_at.slice(0, 10)}T12:00:00`);
+              setPagina(1);
+              setFiltros((f) => ({ ...f, desde: primerDiaDelMes(dia), hasta: ultimoDiaDelMes(dia) }));
+            }}
+            title="Ver el mes de ese movimiento"
+            className="underline decoration-dotted underline-offset-2 hover:text-[var(--tinta)]"
+          >
+            {describir(ultima.movimiento)} del {fecha(ultima.movimiento.occurred_at)}
+          </button>
+        </p>
+      )}
+
       {data && (
         <div className="mb-3 flex flex-wrap items-center gap-4 text-sm">
           <span className="text-[var(--tinta-3)]">{data.total} movimientos</span>
@@ -437,6 +468,7 @@ export default function Movimientos() {
                     categorias={categorias ?? []}
                     onEditar={(datos) => editar.mutate({ id: m.id, datos })}
                     onBorrar={() => borrar.mutate(m.id)}
+                    onRevisar={() => revisar.mutate(m.id)}
                   />
                 ))}
               </tbody>
@@ -465,16 +497,29 @@ export default function Movimientos() {
   );
 }
 
+function concepto(m: Movimiento): string {
+  return m.merchant ? m.merchant.replace(/\b\w/g, (c) => c.toUpperCase()) : (m.description ?? "—");
+}
+
+/** "Comercio (S/ 45.90)" o, si no tiene nombre, "un gasto de S/ 12.00". */
+function describir(m: Movimiento): string {
+  const monto = importe(m.amount, m.currency);
+  if (m.merchant || m.description) return `${concepto(m)} (${monto})`;
+  return `${m.direction === "transferencia" ? "una" : "un"} ${m.direction} de ${monto}`;
+}
+
 function Fila({
   m,
   categorias,
   onEditar,
   onBorrar,
+  onRevisar,
 }: {
   m: Movimiento;
   categorias: Categoria[];
   onEditar: (datos: Record<string, unknown>) => void;
   onBorrar: () => void;
+  onRevisar: () => void;
 }) {
   const signo = m.direction === "ingreso" ? "+" : m.direction === "gasto" ? "−" : "";
   const color =
@@ -490,9 +535,7 @@ function Fila({
         {fechaHora(m.occurred_at)}
       </td>
       <td className="max-w-xs px-2 py-2">
-        <div className="truncate font-medium">
-          {m.merchant ? m.merchant.replace(/\b\w/g, (c) => c.toUpperCase()) : (m.description ?? "—")}
-        </div>
+        <div className="truncate font-medium">{concepto(m)}</div>
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
           <span className="text-xs text-[var(--tinta-3)]">{ETIQUETA_ORIGEN[m.source]}</span>
           {m.locked_by_user && (
@@ -545,7 +588,19 @@ function Fila({
       <td className="tabular px-2 py-2 text-right font-medium whitespace-nowrap" style={{ color }}>
         {signo} {importe(m.amount, m.currency)}
       </td>
-      <td className="px-4 py-2 text-right">
+      <td className="px-4 py-2 text-right whitespace-nowrap">
+        {/* Lo que esta por revisar tiene su propia bandeja; lo protegido ya lo revisaste. */}
+        {!m.locked_by_user && m.status !== "por_revisar" && (
+          <button
+            onClick={onRevisar}
+            title="Revisado: está bien. Queda protegido y con la fecha de hoy, sin cambiar nada."
+            aria-label="Marcar como revisado"
+            className="rounded-md p-1.5 hover:bg-[var(--superficie-2)]"
+            style={{ color: "var(--tinta-3)" }}
+          >
+            <Check size={14} />
+          </button>
+        )}
         <button
           onClick={() => {
             // Un registro tuyo se borra de verdad (queda en la papelera); uno del

@@ -180,6 +180,25 @@ def test_confirmar_desde_por_revisar_tambien_protege(cliente):
     assert tx.locked_by_user
 
 
+def test_marcar_revisado_protege_sin_cambiar_nada_y_es_la_ultima_modificacion(cliente):
+    _ingerir(_correo("proteccion-revisado", "9.00", "COMERCIO REVISADO", "700009", 7))
+    (tx,) = _movs("700009")
+    antes = (tx.category_id, tx.status, tx.necessity, tx.amount_cents)
+    assert not tx.locked_by_user
+
+    r = cliente.post(f"/api/movimientos/{tx.id}/revisado")
+    assert r.status_code == 200, r.text
+    assert r.json()["locked_by_user"]
+    (tx,) = _movs("700009")
+    assert tx.locked_by_user and tx.user_edited_at is not None
+    assert (tx.category_id, tx.status, tx.necessity, tx.amount_cents) == antes
+
+    ultima = cliente.get("/api/movimientos/ultima-modificacion").json()
+    assert ultima["movimiento"]["id"] == tx.id
+    assert ultima["momento"].endswith("+00:00")          # UTC marcado: el navegador no lo corre
+    assert cliente.post("/api/movimientos/999999/revisado").status_code == 404
+
+
 def test_ninguna_regla_ni_reclasificacion_pisa_lo_protegido(cliente):
     from app.clasificacion.adaptadores import fabrica as clasificacion
 
