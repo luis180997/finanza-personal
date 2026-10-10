@@ -20,6 +20,8 @@ TODAS = [
     "2026-09-dolares-a-revisar",
     "2026-09-almuerzo",
     "2026-09-agosto-pasa-al-excel",
+    "2026-10-inversiones-sin-numero-de-cuenta",
+    "2026-10-inversiones-fecha-de-los-splits",
 ]
 
 

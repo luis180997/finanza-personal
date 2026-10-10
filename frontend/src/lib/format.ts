@@ -53,6 +53,20 @@ export function leerMonto(texto: string): number {
   return s ? Number(s) : NaN;
 }
 
+const DOLARES = new Intl.NumberFormat("es-PE", {
+  style: "currency",
+  currency: "USD",
+  minimumFractionDigits: 2,
+});
+
+/** "US$ 1,234.56": la seccion de inversiones va en dolares, sin convertir. */
+export const dolares = (v: number | null | undefined) =>
+  v === null || v === undefined ? "—" : DOLARES.format(v);
+
+/** Fraccion a porcentaje con signo: 0.123 -> "+12.3%". */
+export const pctDe = (fraccion: number | null | undefined) =>
+  fraccion === null || fraccion === undefined ? "—" : pct(fraccion * 100);
+
 /** Para ejes: "1.2 k" en vez de "S/ 1,234.00". */
 export function ejeSoles(v: number): string {
   if (Math.abs(v) >= 1000) return `${(v / 1000).toFixed(1).replace(".0", "")} k`;

@@ -82,6 +82,12 @@ services:
       # semana y mes (ver README).
       RESPALDO_CADA_DIAS: ${RESPALDO_CADA_DIAS:-7}
       RESPALDO_CONSERVAR: ${RESPALDO_CONSERVAR:-8}
+
+      # --- Inversiones: precios de las acciones (Alpaca) ---
+      # Sin claves la seccion funciona igual, con el ultimo precio conocido.
+      ALPACA_KEY_ID: ${ALPACA_KEY_ID:-}
+      ALPACA_SECRET_KEY: ${ALPACA_SECRET_KEY:-}
+      PRECIOS_INTERVALO_MINUTOS: ${PRECIOS_INTERVALO_MINUTOS:-5}
     volumes:
       - ./data:/app/data
       - ./secrets:/app/secrets:ro

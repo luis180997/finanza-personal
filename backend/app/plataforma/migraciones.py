@@ -11,13 +11,16 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Callable
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from sqlmodel import Session, col, select
 
 from app.analitica.dominio.entidades import Budget
 from app.clasificacion.dominio.entidades import Category, Rule
 from app.compartido.tipos import Direction, Source, TxStatus
+from app.inversiones.dominio.entidades import (
+    EstadoCuentaImportado, FuenteOperacion, Operacion, PrecioDiario, TipoOperacion, archivo_de,
+)
 from app.movimientos.dominio.entidades import Transaction
 from app.movimientos.dominio.movimiento import descartar
 from app.plataforma.config import settings
@@ -26,7 +29,7 @@ from app.plataforma.kv import KV
 log = logging.getLogger("finanzas.migraciones")
 
 # Tiendas de conveniencia: lo que se compra ahi es snack. Nombres ya normalizados
-# (normalize.py convierte "TAMBO MENDIOLA-C20" en "tambo").
+# (normalize.py convierte "TAMBO LOCAL-C20" en "tambo").
 COMERCIOS_SNACKS = {"oxxo", "tambo", "listo"}
 _NOTA_SNACK = re.compile(r"\btorta\b|\byogurt\b|\bempanada\b|\bhelado\b|\bsnacks?\b", re.I)
 _NOTA_CAFE = re.compile(r"\bcaf[eé]\b", re.I)
@@ -229,6 +232,61 @@ def _agosto_pasa_al_excel(session: Session) -> str:
     )
 
 
+def _inversiones_sin_numero_de_cuenta(session: Session) -> str:
+    """10/10/2026: el nombre de los PDF de Apex lleva el numero de cuenta.
+
+    Se guardaba tal cual en inv_estado_cuenta.archivo y lo devolvia la API. Pasa a
+    un nombre neutro por periodo; la huella del archivo sigue identificando el PDF.
+    """
+    renombrados = 0
+    for e in session.exec(select(EstadoCuentaImportado)).all():
+        neutro = archivo_de(e.fin)
+        if e.archivo != neutro:
+            e.archivo = neutro
+            session.add(e)
+            renombrados += 1
+    return f"{renombrados} estado(s) de cuenta con nombre neutro"
+
+
+def _inversiones_fecha_de_los_splits(session: Session) -> str:
+    """10/10/2026: un split se anotaba el dia de la fila del estado de cuenta.
+
+    Pero el precio cotiza dividido desde el dia siguiente al pago, unos dias antes:
+    entre medias se valoraban las acciones de antes al precio de despues (una caida
+    falsa en el grafico). El lector ya lo anota bien; aqui se corrigen los ya
+    importados buscando el dia en que el precio cambia de base (el cociente entre el
+    cierre tal cual y el ajustado por splits). Sin precios guardados no se puede
+    saber y el split queda como estaba.
+    """
+    corregidos = []
+    splits = session.exec(select(Operacion).where(
+        Operacion.tipo == TipoOperacion.split, Operacion.fuente == FuenteOperacion.estado_cuenta,
+    )).all()
+    for op in splits:
+        if not op.simbolo:
+            continue
+        precios = session.exec(
+            select(PrecioDiario)
+            .where(PrecioDiario.simbolo == op.simbolo)
+            .where(PrecioDiario.fecha >= op.fecha - timedelta(days=14), PrecioDiario.fecha <= op.fecha)
+            .order_by(col(PrecioDiario.fecha))
+        ).all()
+        anterior = None
+        for p in precios:
+            if not p.cierre_split_micro:
+                continue
+            cociente = p.cierre_micro / p.cierre_split_micro
+            if anterior is not None and anterior / cociente > 1.01:
+                if p.fecha < op.fecha:
+                    corregidos.append(f"{op.simbolo} {op.fecha} -> {p.fecha}")
+                    op.fecha_liquidacion = op.fecha        # la fila del estado, para cuadrar
+                    op.fecha = p.fecha
+                    session.add(op)
+                break
+            anterior = cociente
+    return f"{len(corregidos)} split(s) corregidos: {', '.join(corregidos) or 'ninguno'}"
+
+
 MIGRACIONES: list[tuple[str, Callable[[Session], str]]] = [
     ("2026-09-cafe-y-snacks", _cafe_y_snacks),
     ("2026-09-tiendas-a-snacks", _tiendas_a_snacks),
@@ -236,6 +294,8 @@ MIGRACIONES: list[tuple[str, Callable[[Session], str]]] = [
     ("2026-09-dolares-a-revisar", _dolares_a_revisar),
     ("2026-09-almuerzo", _almuerzo),
     ("2026-09-agosto-pasa-al-excel", _agosto_pasa_al_excel),
+    ("2026-10-inversiones-sin-numero-de-cuenta", _inversiones_sin_numero_de_cuenta),
+    ("2026-10-inversiones-fecha-de-los-splits", _inversiones_fecha_de_los_splits),
 ]
 
 

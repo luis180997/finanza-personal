@@ -71,6 +71,14 @@ class Settings(BaseSettings):
     respaldo_conservar: int = Field(default=8, ge=0)
     respaldo_dir: str = ""
 
+    # Precios de las acciones (Alpaca Market Data, gratis con cuenta de practica).
+    # Sin claves, Inversiones valora con el ultimo precio conocido: el de cierre de
+    # mes del estado de cuenta o el de la ultima operacion.
+    alpaca_key_id: str = ""
+    alpaca_secret_key: str = ""
+    # Cada cuantos minutos se piden precios mientras la bolsa esta abierta. 0 = nunca.
+    precios_intervalo_minutos: int = Field(default=5, ge=0)
+
     @field_validator("database_url")
     @classmethod
     def _sqlite_relativa_a_la_raiz(cls, valor: str) -> str:

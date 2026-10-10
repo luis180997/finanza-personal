@@ -2,7 +2,7 @@
 
 La app esta hecha de modulos con arquitectura hexagonal (puertos y adaptadores):
 
-    clasificacion  movimientos  correo  excel  analitica  seguimiento
+    clasificacion  movimientos  correo  excel  analitica  seguimiento  inversiones
     cada uno con dominio/ (reglas puras), aplicacion/ (casos de uso y puertos)
     y adaptadores/ (entrada: HTTP; salida: SQLite, IMAP/Gmail, Excel...)
 
@@ -26,6 +26,7 @@ from app.clasificacion.adaptadores.entrada import http as clasificacion_http
 from app.compartido.errores import ErrorDeNegocio
 from app.correo.adaptadores.entrada import http as correo_http
 from app.excel.adaptadores.entrada import http as excel_http
+from app.inversiones.adaptadores.entrada import http as inversiones_http
 from app.movimientos.adaptadores.entrada import http as movimientos_http
 from app.plataforma import arranque, programador
 from app.plataforma import http as plataforma_http
@@ -90,6 +91,7 @@ for router in (
     correo_http.router,
     plataforma_http.router,
     seguimiento_http.router,
+    inversiones_http.router,
 ):
     app.include_router(router, prefix="/api")
 

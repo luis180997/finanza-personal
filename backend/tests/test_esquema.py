@@ -71,10 +71,13 @@ def test_el_modelo_y_las_migraciones_dicen_lo_mismo(base):
 
 
 def test_una_base_anterior_a_alembic_se_versiona_sin_perder_nada(base):
-    # Una base como las de antes de Alembic: sin una columna que se anadio despues,
-    # con una tabla ya retirada y con datos.
+    # Una base como las de antes de Alembic: solo con sus tablas (las de versiones
+    # posteriores no existian), sin una columna que se anadio despues, con una
+    # tabla ya retirada y con datos.
     app_db.registrar_tablas()
-    SQLModel.metadata.create_all(base)
+    SQLModel.metadata.create_all(
+        base, tables=[SQLModel.metadata.tables[t] for t in esquema.TABLAS_BASE],
+    )
     protegido = _movimiento(base, 1, protegido=True)
     with base.begin() as conn:
         conn.exec_driver_sql('ALTER TABLE "transaction" DROP COLUMN user_edited_at')
@@ -99,11 +102,13 @@ def test_una_base_anterior_a_alembic_se_versiona_sin_perder_nada(base):
             conn.exec_driver_sql(f'DELETE FROM "transaction" WHERE id = {protegido}')
 
 
+# Cuelga de la ultima version real, sea cual sea: asi no hay que tocar estas
+# pruebas cada vez que se anade una migracion.
 VERSION_DE_PRUEBA = '''
 from alembic import op
 
-revision = "0002"
-down_revision = "0001"
+revision = "9999"
+down_revision = "{madre}"
 branch_labels = None
 depends_on = None
 
@@ -131,11 +136,12 @@ def test_renombrar_una_columna_conserva_datos_y_proteccion(base, tmp_path, monke
 
     carpeta = tmp_path / "migraciones_esquema"
     shutil.copytree(esquema.CARPETA, carpeta, ignore=shutil.ignore_patterns("__pycache__"))
-    (carpeta / "versions" / "0002_renombrar_notas.py").write_text(VERSION_DE_PRUEBA, "utf-8")
+    version = VERSION_DE_PRUEBA.replace("{madre}", esquema.scripts().get_current_head())
+    (carpeta / "versions" / "9999_renombrar_notas.py").write_text(version, "utf-8")
     monkeypatch.setattr(esquema, "CARPETA", carpeta)
 
-    assert esquema.pendientes(base) == ["0002"]
-    assert esquema.actualizar(base) == ["0002"]
+    assert esquema.pendientes(base) == ["9999"]
+    assert esquema.actualizar(base) == ["9999"]
     with base.begin() as conn:
         app_db._proteger_movimientos(conn)       # lo que hace init_db despues
 
@@ -143,7 +149,7 @@ def test_renombrar_una_columna_conserva_datos_y_proteccion(base, tmp_path, monke
     assert "notas" in columnas and "notes" not in columnas
     assert _cuenta(base, 'SELECT COUNT(*) FROM "transaction" WHERE notas LIKE \'nota %\'') == 2
     assert _cuenta(base, "SELECT COUNT(*) FROM transaction_papelera") == 0
-    assert esquema.version_actual(base) == "0002"
+    assert esquema.version_actual(base) == "9999"
     with pytest.raises(IntegrityError, match="protegido"):
         with base.begin() as conn:
             conn.exec_driver_sql(f'DELETE FROM "transaction" WHERE id = {protegido}')
@@ -152,8 +158,9 @@ def test_renombrar_una_columna_conserva_datos_y_proteccion(base, tmp_path, monke
 def test_una_migracion_que_falla_no_deja_la_base_a_medias(base, tmp_path, monkeypatch):
     app_db.init_db()
     _movimiento(base, 1, protegido=True)
+    ultima = esquema.scripts().get_current_head()
 
-    rota = VERSION_DE_PRUEBA.replace(
+    rota = VERSION_DE_PRUEBA.replace("{madre}", ultima).replace(
         'batch.alter_column("notes", new_column_name="notas")',
         'batch.alter_column("notes", new_column_name="notas")\n'
         '    op.execute("SELECT columna_que_no_existe FROM kv")',
@@ -161,7 +168,7 @@ def test_una_migracion_que_falla_no_deja_la_base_a_medias(base, tmp_path, monkey
     )
     carpeta = tmp_path / "migraciones_esquema"
     shutil.copytree(esquema.CARPETA, carpeta, ignore=shutil.ignore_patterns("__pycache__"))
-    (carpeta / "versions" / "0002_rota.py").write_text(rota, "utf-8")
+    (carpeta / "versions" / "9999_rota.py").write_text(rota, "utf-8")
     monkeypatch.setattr(esquema, "CARPETA", carpeta)
 
     with pytest.raises(Exception):
@@ -169,7 +176,7 @@ def test_una_migracion_que_falla_no_deja_la_base_a_medias(base, tmp_path, monkey
 
     columnas = {c["name"] for c in inspect(base).get_columns("transaction")}
     assert "notes" in columnas and "notas" not in columnas
-    assert esquema.version_actual(base) == "0001"
+    assert esquema.version_actual(base) == ultima
     assert _cuenta(base, 'SELECT COUNT(*) FROM "transaction"') == 1
 
 

@@ -15,6 +15,11 @@ _TMP_DIR = tempfile.mkdtemp()
 _TEST_DB = Path(_TMP_DIR) / "test_suite.db"
 os.environ["DATABASE_URL"] = f"sqlite:///{_TEST_DB.as_posix()}"
 os.environ["SYNC_INTERVAL_MINUTES"] = "0"
+# Ni tarea de precios ni claves de Alpaca: con las del .env, arrancar la app en una
+# prueba programaba la tarea y salia a internet. Las pruebas usan proveedores falsos.
+os.environ["PRECIOS_INTERVALO_MINUTOS"] = "0"
+os.environ["ALPACA_KEY_ID"] = ""
+os.environ["ALPACA_SECRET_KEY"] = ""
 os.environ["APP_ENV"] = "test"
 # Sin respaldos automaticos: escribirian copias de la base temporal en la carpeta
 # de respaldos reales, y la poda borraria los buenos.

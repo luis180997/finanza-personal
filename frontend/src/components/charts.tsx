@@ -31,9 +31,9 @@ import type { Corte, PuntoDiario, PuntoMensual, PuntoPeriodo } from "../lib/api"
 import { ejeSoles, fechaCorta, soles } from "../lib/format";
 import { Vacio } from "./ui";
 
-const EJE = { fontSize: 11, fill: "var(--tinta-3)" };
+export const EJE = { fontSize: 11, fill: "var(--tinta-3)" };
 
-function CajaTooltip({ children }: { children: React.ReactNode }) {
+export function CajaTooltip({ children }: { children: React.ReactNode }) {
   return (
     <div
       className="rounded-lg border px-3 py-2 text-xs shadow-lg"

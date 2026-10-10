@@ -84,6 +84,13 @@ export interface MotivoRevision {
   accion: string;
 }
 
+/** Lo ultimo que tocaste en Movimientos: desde ahi sigue lo que falta validar. */
+export interface UltimaModificacion {
+  /** Cuando lo tocaste (ISO, UTC). */
+  momento: string;
+  movimiento: Movimiento;
+}
+
 export interface PaginaMovimientos {
   items: Movimiento[];
   total: number;
@@ -431,6 +438,10 @@ export const api = {
     pedir<Movimiento>(`/movimientos/${id}`, { method: "PATCH", body: JSON.stringify(datos) }),
   borrarMovimiento: (id: number) =>
     pedir<void>(`/movimientos/${id}`, { method: "DELETE" }),
+  /** Lo revisaste y esta bien: queda protegido y con fecha, sin cambiar nada. */
+  marcarRevisado: (id: number) =>
+    pedir<Movimiento>(`/movimientos/${id}/revisado`, { method: "POST" }),
+  ultimaModificacion: () => pedir<UltimaModificacion | null>("/movimientos/ultima-modificacion"),
   editarLote: (datos: Record<string, unknown>) =>
     pedir<{ afectados: number }>("/movimientos/lote", {
       method: "POST",
@@ -545,7 +556,226 @@ export const api = {
   papelera: (limite = 200) => pedir<EntradaPapelera[]>(`/papelera${qs({ limite })}`),
   restaurarPapelera: (id: number) =>
     pedir<{ id: number }>(`/papelera/${id}/restaurar`, { method: "POST" }),
+
+  inversiones: {
+    resumen: () => pedir<ResumenInversiones>("/inversiones/resumen"),
+    posiciones: () => pedir<PosicionInversion[]>("/inversiones/posiciones"),
+    serie: (rango: RangoInversion) => pedir<SerieInversion>(`/inversiones/serie${qs({ rango })}`),
+    rentabilidad: () => pedir<RentabilidadInversion>("/inversiones/rentabilidad"),
+    dividendos: () => pedir<DividendosInversion>("/inversiones/dividendos"),
+    estados: () => pedir<EstadoCuentaImportado[]>("/inversiones/estados"),
+    accion: (simbolo: string) =>
+      pedir<DetalleAccion>(`/inversiones/acciones/${encodeURIComponent(simbolo)}`),
+    precios: (simbolo: string, rango: RangoInversion) =>
+      pedir<PreciosAccion>(`/inversiones/acciones/${encodeURIComponent(simbolo)}/precios${qs({ rango })}`),
+    sincronizar: () => pedir<SincronizacionInversiones>("/inversiones/sincronizar", { method: "POST" }),
+    previsualizar: (archivos: File[]) => {
+      const fd = new FormData();
+      archivos.forEach((a) => fd.append("archivos", a));
+      return subir<ImportacionEstados>("/inversiones/estados/previsualizar", fd);
+    },
+    importar: (archivos: File[]) => {
+      const fd = new FormData();
+      archivos.forEach((a) => fd.append("archivos", a));
+      return subir<ImportacionEstados>("/inversiones/estados", fd);
+    },
+  },
 };
+
+/* ------------------------------------------------------------------ inversiones */
+/* Todo en dolares: la seccion de inversiones no convierte a soles. Los porcentajes
+   llegan como fraccion (0.12 = 12 %). */
+
+/** YTD: lo que va del anio. */
+export type RangoInversion = "1D" | "1S" | "1M" | "3M" | "6M" | "YTD" | "1A" | "TODO";
+export type EstadoOperacionInv = "provisional" | "oficial" | "descartada";
+
+export interface ResumenInversiones {
+  configuracion: { precios: boolean; correo: boolean };
+  valor: number;
+  acciones: number;
+  efectivo: number;
+  /** Depositos - retiros: lo que pusiste de tu bolsillo y sigue dentro. */
+  aportes: number;
+  ganancia: number;
+  ganancia_pct: number | null;
+  dia: { variacion: number | null; variacion_pct: number | null };
+  /** Rentabilidad anual que tiene en cuenta cuando entro cada dolar (XIRR). */
+  rentabilidad_anual: number | null;
+  /** Lo que entro de media cada mes en el ultimo anio, neto de retiros. */
+  aporte_mensual: number;
+  referencia: { simbolo: string; valor: number | null; rentabilidad_anual: number | null };
+  realizada: number;
+  no_realizada: number;
+  dividendos: { bruto: number; retencion: number; neto: number };
+  costos: { operaciones: number; depositos: number; retiros: number; total: number };
+  intereses: number;
+  ajustes: number;
+  /** Momento del precio mas reciente usado (ISO, UTC). */
+  precios_al: string | null;
+  ultimo_estado: { periodo: string; fin: string; cuadra: boolean; diferencia_efectivo: number } | null;
+  provisionales: number;
+  avisos: string[];
+}
+
+export interface PosicionInversion {
+  simbolo: string | null;
+  nombre: string | null;
+  cantidad: number;
+  precio: number | null;
+  precio_fuente: "intradia" | "cierre" | "estado_cuenta" | "operacion" | null;
+  precio_al: string | null;
+  valor: number;
+  costo: number;
+  costo_promedio: number | null;
+  ganancia: number;
+  ganancia_pct: number | null;
+  peso: number | null;
+  variacion_dia: number | null;
+  variacion_dia_pct: number | null;
+  dividendos_netos: number;
+  realizada: number;
+}
+
+export interface PuntoValor {
+  t: string;
+  valor: number;
+  aportes: number;
+}
+
+/** Ganancia de un periodo. La rentabilidad no cuenta los depositos como ganancia
+ *  (ponderada en el tiempo); la referencia es la del S&P 500 en el mismo periodo. */
+export interface PeriodoInversion {
+  ganancia: number;
+  rentabilidad: number;
+  referencia: number | null;
+}
+
+export interface SerieInversion {
+  detalle: "intradia" | "diario";
+  puntos: PuntoValor[];
+  periodo: PeriodoInversion | null;
+}
+
+export interface FilaRentabilidad extends PeriodoInversion {
+  /** Lo que entro menos lo que salio en el periodo. */
+  aportes: number;
+  valor_final: number;
+}
+
+export interface RentabilidadInversion {
+  /** Simbolo del indice de referencia (VOO). */
+  referencia: string;
+  por_mes: (FilaRentabilidad & { mes: string })[];
+  por_anio: (FilaRentabilidad & { anio: number; en_curso: boolean })[];
+  acumulada: { t: string; tuya: number; referencia: number | null }[];
+  total: FilaRentabilidad | null;
+}
+
+export interface FilaDividendos {
+  bruto: number;
+  retencion: number;
+  neto: number;
+}
+
+export interface DividendosInversion {
+  por_mes: (FilaDividendos & { mes: string })[];
+  por_valor: (FilaDividendos & { simbolo: string; nombre: string | null })[];
+  total: FilaDividendos;
+}
+
+export interface OperacionInversion {
+  id: number;
+  tipo: string;
+  simbolo: string | null;
+  nombre: string | null;
+  fecha: string;
+  /** Sin correo, la fecha se deduce de la liquidacion. */
+  fecha_estimada: boolean;
+  /** Hora exacta del correo (ISO, UTC). */
+  hora: string | null;
+  fecha_liquidacion: string | null;
+  cantidad: number | null;
+  precio: number | null;
+  monto: number;
+  retencion: number;
+  comision: number | null;
+  estado: EstadoOperacionInv;
+  fuente: "correo" | "estado_cuenta";
+  nota: string | null;
+  con_correo: boolean;
+}
+
+export interface DetalleAccion {
+  simbolo: string;
+  nombre: string | null;
+  posicion: PosicionInversion | null;
+  realizada: number;
+  comisiones: number;
+  dividendos: FilaDividendos & { por_mes: { mes: string; neto: number }[] };
+  operaciones: OperacionInversion[];
+}
+
+export interface MarcaOperacion {
+  t: string;
+  tipo: "compra" | "venta";
+  cantidad: number | null;
+  precio: number | null;
+  monto: number;
+  estado: EstadoOperacionInv;
+}
+
+export interface PreciosAccion {
+  detalle: "intradia" | "diario";
+  puntos: { t: string; precio: number }[];
+  marcas: MarcaOperacion[];
+}
+
+export interface EstadoCuentaImportado {
+  periodo: string;
+  inicio: string;
+  fin: string;
+  archivo: string;
+  caja: number;
+  fdic: number;
+  valores: number;
+  total: number;
+  operaciones: number;
+  con_correo: number;
+  fechas_estimadas: number;
+  correos_no_recogidos: number;
+}
+
+export interface ComparacionEstado {
+  /** Habia correos de ese mes antes de subir el estado. */
+  seguido_por_correo: boolean;
+  efectivo: number;
+  total: number;
+  acciones: { simbolo: string; segun_app: number; segun_estado: number; valor: number }[];
+}
+
+export interface DocumentoImportado {
+  nombre: string;
+  periodo: string | null;
+  estado: "nuevo" | "ya_importado" | "error";
+  errores: string[];
+  operaciones_nuevas: number;
+  conciliadas_con_correo: number;
+  correos_descartados: number;
+  comparacion: ComparacionEstado | null;
+}
+
+export interface ImportacionEstados {
+  documentos: DocumentoImportado[];
+  errores: string[];
+  confirmado: boolean;
+  importables: number;
+}
+
+export interface SincronizacionInversiones {
+  correos: { leidos: number; nuevos: number; operaciones: number; completadas: number; repetidos: number };
+  precios: { configurado: boolean; cierres: number; intradia: number; error: string | null };
+}
 
 /** Un movimiento borrado de verdad. Lo copia un trigger de la base, lo borre quien lo borre. */
 export interface EntradaPapelera {

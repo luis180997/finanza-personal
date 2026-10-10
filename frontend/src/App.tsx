@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { NavLink, Navigate, Route, Routes } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import {
+  ChartCandlestick,
   Inbox,
   LayoutDashboard,
   Mail,
@@ -25,6 +26,8 @@ import { Tarjeta, Vacio } from "./components/ui";
 import Panel from "./pages/Panel";
 import Tendencia from "./pages/Tendencia";
 import Seguimiento from "./pages/Seguimiento";
+import Inversiones from "./pages/Inversiones";
+import InversionAccion from "./pages/InversionAccion";
 import Movimientos from "./pages/Movimientos";
 import Registrar from "./pages/Registrar";
 import Revision from "./pages/Revision";
@@ -52,6 +55,7 @@ const NAV: EntradaNav[] = [
   // contador) tiene que seguir entre ellas.
   { a: "/revision", icono: Inbox, texto: "Por revisar", contador: true },
   { a: "/seguimiento", icono: Scale, texto: "Seguimiento" },
+  { a: "/inversiones", icono: ChartCandlestick, texto: "Inversiones" },
   { a: "/presupuesto", icono: PiggyBank, texto: "Presupuesto" },
   { a: "/correo", icono: Mail, texto: "Correo" },
   { a: "/importar", icono: Upload, texto: "Importar Excel", requiere: "importar_excel" },
@@ -178,6 +182,8 @@ export default function App() {
           <Route path="/panel" element={<Panel />} />
           <Route path="/tendencia" element={<Tendencia />} />
           <Route path="/seguimiento" element={<Seguimiento />} />
+          <Route path="/inversiones" element={<Inversiones />} />
+          <Route path="/inversiones/:simbolo" element={<InversionAccion />} />
           <Route path="/registrar" element={<Registrar />} />
           <Route path="/movimientos" element={<Movimientos />} />
           <Route path="/revision" element={<Revision />} />

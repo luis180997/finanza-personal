@@ -1,7 +1,8 @@
 """El programador: el otro adaptador de entrada, ademas de la API.
 
 Lanza, sin que nadie pulse nada, los mismos casos de uso que la interfaz: la
-sincronizacion del correo y el respaldo de la base.
+sincronizacion del correo (banco y Hapi), los precios de las acciones y el
+respaldo de la base.
 """
 from __future__ import annotations
 
@@ -28,6 +29,26 @@ def _sincronizar_correo() -> None:
         )
 
 
+def _correos_hapi() -> None:
+    from app.inversiones.adaptadores import fabrica as inversiones
+
+    with inversiones.en_exclusiva() as libre:
+        if not libre:                # alguien pulso "Actualizar": ya lo esta haciendo
+            return
+        with Session(engine) as s:
+            inversiones.correos(s).sincronizar()
+
+
+def _precios() -> None:
+    from app.inversiones.adaptadores import fabrica as inversiones
+
+    with inversiones.en_exclusiva() as libre:
+        if not libre:
+            return
+        with Session(engine) as s:
+            inversiones.precios(s).actualizar()
+
+
 def iniciar():
     """Arranca las tareas que esten encendidas. Devuelve el planificador, o None."""
     from apscheduler.schedulers.background import BackgroundScheduler
@@ -39,6 +60,19 @@ def iniciar():
                              minutes=settings.sync_interval_minutes,
                              id="sync_gmail", max_instances=1, coalesce=True)
         log.info("sincronizacion automatica cada %s min", settings.sync_interval_minutes)
+
+        # Los correos de Hapi, al mismo ritmo pero aparte: la lectura de los del
+        # banco no cambia.
+        planificador.add_job(_correos_hapi, "interval",
+                             minutes=settings.sync_interval_minutes,
+                             id="sync_hapi", max_instances=1, coalesce=True)
+
+    if settings.precios_intervalo_minutos > 0 and settings.alpaca_key_id:
+        # Con la bolsa cerrada la tarea solo comprueba si falta algun cierre.
+        planificador.add_job(_precios, "interval", minutes=settings.precios_intervalo_minutos,
+                             id="precios", next_run_time=datetime.now(ZoneInfo(settings.timezone)),
+                             max_instances=1, coalesce=True)
+        log.info("precios de acciones cada %s min con la bolsa abierta", settings.precios_intervalo_minutos)
 
     if settings.respaldo_cada_dias > 0:
         from app.plataforma import respaldo
