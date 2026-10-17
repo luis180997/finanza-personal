@@ -131,8 +131,11 @@ export default function Movimientos() {
   const mesActualInicio = primerDiaDelMes();
   const mesActualFin = ultimoDiaDelMes();
 
-  const fechaMesPasado = new Date();
-  fechaMesPasado.setMonth(fechaMesPasado.getMonth() - 1);
+  // Del dia 1, no de hoy: el 31 de octubre, "un mes antes" con setMonth es el 31 de
+  // setiembre, que JavaScript convierte en el 1 de octubre, y "Mes pasado" mostraba
+  // octubre.
+  const hoy = new Date();
+  const fechaMesPasado = new Date(hoy.getFullYear(), hoy.getMonth() - 1, 1);
   const mesPasadoInicio = primerDiaDelMes(fechaMesPasado);
   const mesPasadoFin = ultimoDiaDelMes(fechaMesPasado);
 
@@ -148,8 +151,10 @@ export default function Movimientos() {
   }, [filtros.desde, filtros.hasta, mesActualInicio, mesActualFin, mesPasadoInicio, mesPasadoFin, anioActualInicio, anioActualFin]);
 
   function cambiarMes(delta: number) {
-    const base = filtros.desde ? new Date(`${filtros.desde}T12:00:00`) : new Date();
-    base.setMonth(base.getMonth() + delta);
+    // Tambien desde el dia 1: con un rango a medida que empieza el 31, setMonth se
+    // saltaba febrero o se quedaba en el mismo mes.
+    const desde = filtros.desde ? new Date(`${filtros.desde}T12:00:00`) : new Date();
+    const base = new Date(desde.getFullYear(), desde.getMonth() + delta, 1);
     setPagina(1);
     setFiltros((f) => ({
       ...f,
