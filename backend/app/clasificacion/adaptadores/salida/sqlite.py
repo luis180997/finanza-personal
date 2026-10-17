@@ -81,15 +81,32 @@ class MemoriaSqlite:
     def mas_usada(
         self, comercio: str, excluir_id: int | None,
     ) -> tuple[int, Necessity | None, int] | None:
-        fila = self.session.exec(
-            select(Transaction.category_id, Transaction.necessity, func.count().label("n"))
-            .where(
-                Transaction.merchant == comercio,
-                Transaction.category_id.is_not(None),
-                Transaction.status == TxStatus.confirmada,
-                Transaction.id != excluir_id,
-            )
-            .group_by(Transaction.category_id, Transaction.necessity)
-            .order_by(func.count().desc())
+        """La categoria que mas veces elegiste para ese comercio y, dentro de ella, la
+        necesidad que mas le pusiste. A igualdad de veces, la mas reciente.
+
+        Se cuenta por categoria y no por la pareja categoria-necesidad: contadas por
+        pareja, 2 veces Cine esencial y 2 Cine discrecional (4 votos para Cine)
+        perdian contra 3 veces Regalos.
+        """
+        condiciones = (
+            Transaction.merchant == comercio,
+            Transaction.category_id.is_not(None),
+            Transaction.status == TxStatus.confirmada,
+            Transaction.id != excluir_id,
+        )
+        ganadora = self.session.exec(
+            select(Transaction.category_id, func.count())
+            .where(*condiciones)
+            .group_by(Transaction.category_id)
+            .order_by(func.count().desc(), func.max(Transaction.occurred_at).desc())
         ).first()
-        return tuple(fila) if fila else None
+        if not ganadora:
+            return None
+        category_id, veces = ganadora
+        necesidad = self.session.exec(
+            select(Transaction.necessity)
+            .where(*condiciones, Transaction.category_id == category_id)
+            .group_by(Transaction.necessity)
+            .order_by(func.count().desc(), func.max(Transaction.occurred_at).desc())
+        ).first()
+        return category_id, necesidad, veces
