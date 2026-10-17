@@ -7,7 +7,7 @@ from datetime import date, datetime
 from pydantic import BaseModel, Field, field_validator
 
 from app.compartido.tipos import Direction, Necessity, PaymentMethod, Source, TxStatus
-from app.compartido.validaciones import exigir_fecha_posible, rechazar_nulo
+from app.compartido.validaciones import exigir_fecha_posible, exigir_un_centimo, rechazar_nulo
 from app.movimientos.dominio.entidades import AccountType
 
 
@@ -68,6 +68,7 @@ class TransactionIn(BaseModel):
         return v or None
 
     _fecha_posible = field_validator("occurred_at")(exigir_fecha_posible)
+    _un_centimo = field_validator("amount")(exigir_un_centimo)
 
 
 class TransactionPatch(BaseModel):
@@ -91,6 +92,7 @@ class TransactionPatch(BaseModel):
         "amount", "currency", "direction", "occurred_at", "status", "is_recurring", mode="before",
     )(rechazar_nulo)
     _fecha_posible = field_validator("occurred_at")(exigir_fecha_posible)
+    _un_centimo = field_validator("amount")(exigir_un_centimo)
 
     @field_validator("currency")
     @classmethod

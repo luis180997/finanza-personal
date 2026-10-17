@@ -1,9 +1,11 @@
 """Validaciones de datos de entrada que comparten los contratos HTTP de varios modulos."""
 from __future__ import annotations
 
+import math
 from datetime import datetime
 
 from app.compartido.corte import ANIO_MAX, ANIO_MIN
+from app.compartido.dinero import to_cents
 
 
 def rechazar_nulo(valor):
@@ -11,6 +13,18 @@ def rechazar_nulo(valor):
     commit y devolvia un 500. Si no quieres cambiar el campo, no lo mandes."""
     if valor is None:
         raise ValueError("no puede ser null; omite el campo si no quieres cambiarlo")
+    return valor
+
+
+def exigir_un_centimo(valor: float | None) -> float | None:
+    """`gt=0` mira el numero tal como lo escribes, pero se guarda redondeado a
+    centimos: 0.004 pasaba la validacion y quedaba guardado como S/ 0.00."""
+    if valor is None:
+        return valor
+    if not math.isfinite(valor):
+        raise ValueError("el importe no es un numero valido")
+    if to_cents(valor) < 1:
+        raise ValueError("el importe minimo es 0.01")
     return valor
 
 
