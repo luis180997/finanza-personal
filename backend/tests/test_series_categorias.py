@@ -164,6 +164,21 @@ def _gasto_del_dia(dia: int, soles: int):
                            amount_cents=soles * 100)
 
 
+def test_los_totales_de_tendencia_se_suman_en_centimos():
+    """Sumados en soles, 0.10 + 0.20 daba 0.30000000000000004."""
+    from app.analitica.dominio.calculos import serie_periodos
+    from app.analitica.dominio.periodos import Rango
+
+    gastos = [_gasto_del_dia(1, 0), _gasto_del_dia(2, 0)]
+    gastos[0].amount_cents, gastos[1].amount_cents = 10, 20
+    for g in gastos:
+        g.category_id = None
+    r = serie_periodos(gastos, {}, "mes", Rango(date(2026, 10, 1), date(2026, 10, 31)))
+    assert r["totales"]["gasto"] == 0.3
+    assert r["totales"]["neto"] == -0.3
+    assert r["totales"]["promedio"] == 0.3
+
+
 def test_el_ritmo_no_dibuja_los_dias_que_no_han_llegado():
     """Antes el acumulado seguia hasta fin de mes repitiendo el ultimo valor: una
     linea plana, como si ya no se fuera a gastar nada. Ahora el real se corta en hoy

@@ -734,7 +734,11 @@ def serie_periodos(
     ]
 
     con_datos = [p for p in salida if p["movimientos"]]
-    gasto_total = sum(p["gasto"] for p in salida)
+    # En centimos y convertidos al final: sumar los importes ya en soles arrastraba
+    # el error de coma flotante (0.10 + 0.20 daba 0.30000000000000004).
+    en_rango = [cubos[c] for c in claves if c in cubos]
+    gasto_cents = sum(d["gasto"] for d in en_rango)
+    ingreso_cents = sum(d["ingreso"] for d in en_rango)
     return {
         "agrupar": agrupar,
         "rango": {"desde": rango.desde.isoformat(), "hasta": rango.hasta.isoformat()},
@@ -744,15 +748,15 @@ def serie_periodos(
         "categorias": leyenda,
         "arbol_categorias": arbol_categorias,
         "totales": {
-            "gasto": gasto_total,
-            "ingreso": sum(p["ingreso"] for p in salida),
-            "neto": sum(p["neto"] for p in salida),
+            "gasto": to_amount(gasto_cents),
+            "ingreso": to_amount(ingreso_cents),
+            "neto": to_amount(ingreso_cents - gasto_cents),
             "movimientos": sum(p["movimientos"] for p in salida),
             # El promedio se calcula solo sobre los periodos CON movimientos: si
             # tu historial empieza en agosto, dividir el anio entero entre 12
             # daria un "promedio mensual" que no has vivido.
             "periodos_con_datos": len(con_datos),
-            "promedio": round(gasto_total / len(con_datos), 2) if con_datos else 0.0,
+            "promedio": to_amount(round(gasto_cents / len(con_datos))) if con_datos else 0.0,
             "mayor": max(con_datos, key=lambda p: p["gasto"]) if con_datos else None,
         },
     }
