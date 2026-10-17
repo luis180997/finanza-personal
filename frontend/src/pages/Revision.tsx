@@ -1,12 +1,12 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, CircleSlash, Copy, HelpCircle, Sparkles } from "lucide-react";
-import { api } from "../lib/api";
+import { api, ErrorApi } from "../lib/api";
 import type { Movimiento } from "../lib/api";
 import { ETIQUETA_ORIGEN, fechaHora, importe, leerMonto } from "../lib/format";
 import { Encabezado } from "../App";
 import { SelectorCategoria } from "./Movimientos";
-import { Boton, Cargando, Etiqueta, Tarjeta, Vacio } from "../components/ui";
+import { Aviso, Boton, Cargando, Etiqueta, Tarjeta, Vacio } from "../components/ui";
 
 /**
  * Bandeja de triaje. Aqui aterriza lo que el sistema no pudo clasificar con
@@ -16,6 +16,8 @@ import { Boton, Cargando, Etiqueta, Tarjeta, Vacio } from "../components/ui";
 export default function Revision() {
   const qc = useQueryClient();
   const [seleccion, setSeleccion] = useState<Set<number>>(new Set());
+  // Cuantos cobros en otra moneda se quedaron en la bandeja al confirmar en lote.
+  const [sinSoles, setSinSoles] = useState(0);
 
   const { data, isLoading } = useQuery({ queryKey: ["revision"], queryFn: api.colaRevision });
   const { data: categorias } = useQuery({ queryKey: ["categorias"], queryFn: api.categorias });
@@ -29,16 +31,22 @@ export default function Revision() {
   const editar = useMutation({
     mutationFn: ({ id, datos }: { id: number; datos: Record<string, unknown> }) =>
       api.editarMovimiento(id, datos),
-    onSuccess: refrescar,
+    onSuccess: () => {
+      setSinSoles(0);
+      refrescar();
+    },
   });
 
   const lote = useMutation({
     mutationFn: api.editarLote,
-    onSuccess: () => {
+    onSuccess: (r) => {
       setSeleccion(new Set());
+      setSinSoles(r.sin_importe_en_soles ?? 0);
       refrescar();
     },
   });
+
+  const error = editar.error ?? lote.error;
 
   function alternar(id: number) {
     setSeleccion((s) => {
@@ -85,6 +93,25 @@ export default function Revision() {
         }
       />
 
+      {(error || sinSoles > 0) && (
+        <div className="mb-3 space-y-2">
+          {error && (
+            <Aviso tono="critico">
+              {error instanceof ErrorApi
+                ? error.message
+                : "No se pudo guardar. Revisa que la app esté corriendo."}
+            </Aviso>
+          )}
+          {sinSoles > 0 && (
+            <Aviso tono="aviso">
+              {sinSoles === 1
+                ? "1 cobro se quedó en la bandeja: está en otra moneda y falta escribir los soles que te cobró el banco."
+                : `${sinSoles} cobros se quedaron en la bandeja: están en otra moneda y falta escribir los soles que te cobró el banco.`}
+            </Aviso>
+          )}
+        </div>
+      )}
+
       {!data?.length ? (
         <Tarjeta>
           <Vacio
@@ -124,6 +151,8 @@ function FichaRevision({
   onEditar: (datos: Record<string, unknown>) => void;
 }) {
   const confianzaBaja = m.confidence < 0.75;
+  // La misma regla que el backend: una transferencia no cuenta, asi que esa si se confirma.
+  const faltanSoles = m.currency !== "PEN" && m.direction !== "transferencia";
   // Cuando el movimiento entra por una deduccion nuestra (envio a ti mismo,
   // casa de cambio), la nota del sistema es la misma frase que el motivo que ya
   // se muestra arriba. Repetirla alarga la ficha sin decir nada nuevo.
@@ -246,10 +275,14 @@ function FichaRevision({
             <option value="evitable">Evitable</option>
           </select>
           <div className="flex gap-2">
+            {/* Un cobro en otra moneda no se confirma sin sus soles: se sumaria
+                como si lo fueran. El backend tambien lo rechaza. */}
             <Boton
               variante="primario"
               className="flex-1"
               onClick={() => onEditar({ status: "confirmada" })}
+              disabled={faltanSoles}
+              title={faltanSoles ? "Escribe primero los soles que te cobró el banco" : undefined}
             >
               <Check size={14} /> Confirmar
             </Boton>

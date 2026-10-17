@@ -11,7 +11,6 @@ import {
   PiggyBank,
   ReceiptText,
   Scale,
-  Upload,
   Settings2,
   SlidersHorizontal,
   TrendingUp,
@@ -20,9 +19,7 @@ import {
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api } from "./lib/api";
-import type { ConfigApp } from "./lib/api";
 import { AvisoRespaldos } from "./components/respaldos";
-import { Tarjeta, Vacio } from "./components/ui";
 import Panel from "./pages/Panel";
 import Tendencia from "./pages/Tendencia";
 import Seguimiento from "./pages/Seguimiento";
@@ -32,7 +29,6 @@ import Movimientos from "./pages/Movimientos";
 import Registrar from "./pages/Registrar";
 import Revision from "./pages/Revision";
 import Presupuesto from "./pages/Presupuesto";
-import Importar from "./pages/Importar";
 import Reglas from "./pages/Reglas";
 import Correo from "./pages/Correo";
 import Ajustes from "./pages/Ajustes";
@@ -42,8 +38,6 @@ interface EntradaNav {
   icono: LucideIcon;
   texto: string;
   contador?: boolean;
-  /** La entrada solo aparece si el servidor tiene encendido este interruptor. */
-  requiere?: keyof ConfigApp;
 }
 
 const NAV: EntradaNav[] = [
@@ -58,7 +52,6 @@ const NAV: EntradaNav[] = [
   { a: "/inversiones", icono: ChartCandlestick, texto: "Inversiones" },
   { a: "/presupuesto", icono: PiggyBank, texto: "Presupuesto" },
   { a: "/correo", icono: Mail, texto: "Correo" },
-  { a: "/importar", icono: Upload, texto: "Importar Excel", requiere: "importar_excel" },
   { a: "/reglas", icono: SlidersHorizontal, texto: "Reglas" },
   { a: "/ajustes", icono: Settings2, texto: "Cuentas y copias" },
 ];
@@ -86,15 +79,6 @@ export default function App() {
   });
   const numPendientes = pendientes?.length ?? 0;
 
-  // Los interruptores los decide el servidor (variables de entorno): asi el menu
-  // y la API nunca discrepan, y no hace falta recompilar la interfaz.
-  const { data: config } = useQuery({
-    queryKey: ["config"],
-    queryFn: api.config,
-    staleTime: Infinity,
-  });
-  const nav = NAV.filter((n) => !n.requiere || config?.[n.requiere]);
-
   return (
     <div className="flex min-h-screen">
       <aside
@@ -110,7 +94,7 @@ export default function App() {
         </div>
 
         <nav className="flex-1 space-y-1">
-          {nav.map(({ a, icono: Icono, texto, contador }) => (
+          {NAV.map(({ a, icono: Icono, texto, contador }) => (
             <NavLink
               key={a}
               to={a}
@@ -153,7 +137,7 @@ export default function App() {
         className="fixed inset-x-0 bottom-0 z-20 flex justify-around border-t py-1 md:hidden"
         style={{ borderColor: "var(--borde)", background: "var(--superficie)" }}
       >
-        {nav.slice(0, 5).map(({ a, icono: Icono, texto, contador }) => (
+        {NAV.slice(0, 5).map(({ a, icono: Icono, texto, contador }) => (
           <NavLink
             key={a}
             to={a}
@@ -189,34 +173,14 @@ export default function App() {
           <Route path="/revision" element={<Revision />} />
           <Route path="/correo" element={<Correo />} />
           <Route path="/presupuesto" element={<Presupuesto />} />
-          <Route
-            path="/importar"
-            element={
-              !config ? null : config.importar_excel ? <Importar /> : <ImportarDeshabilitado />
-            }
-          />
           <Route path="/reglas" element={<Reglas />} />
           <Route path="/ajustes" element={<Ajustes />} />
           {/* Una ruta que ya no existe (un marcador a /comparativa, retirada en
-              set. 2026) llevaba a una pantalla en blanco sin explicacion. */}
+              set. 2026, o a /importar, en oct. 2026) llevaba a una pantalla en
+              blanco sin explicacion. */}
           <Route path="*" element={<Navigate to="/panel" replace />} />
         </Routes>
       </main>
-    </div>
-  );
-}
-
-/** Quien llegue a /importar con un enlace guardado ve por que no esta, no un 404. */
-function ImportarDeshabilitado() {
-  return (
-    <div className="p-4 md:p-6">
-      <Encabezado titulo="Importar Excel" />
-      <Tarjeta>
-        <Vacio
-          titulo="La importación de Excel está deshabilitada"
-          detalle="El Excel ya está importado hasta el 31/08/2026 y desde setiembre los gastos llegan por correo: otro archivo con filas nuevas los duplicaría. Para usarla, pon IMPORTAR_EXCEL_HABILITADO=true en el .env y reinicia la aplicación."
-        />
-      </Tarjeta>
     </div>
   );
 }

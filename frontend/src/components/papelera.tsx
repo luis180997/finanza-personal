@@ -15,7 +15,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ExternalLink, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { api, ErrorApi } from "../lib/api";
-import type { Categoria, Direccion } from "../lib/api";
+import type { Categoria, Direccion, Movimiento } from "../lib/api";
 import { ETIQUETA_ORIGEN, fecha, fechaHora, importe } from "../lib/format";
 import { Boton, Cargando, Etiqueta, Tarjeta, Vacio } from "./ui";
 
@@ -152,8 +152,13 @@ export function VistaDescartados() {
     queryKey: ["movimientos", "descartados"],
     queryFn: () => api.movimientos({ estado: "ignorada", tamano: 200, orden: "fecha_desc" }),
   });
+  // Un cobro en otra moneda vuelve a la bandeja, no a confirmado: alli se escriben
+  // sus soles. Confirmarlo sin ellos lo sumaria como si fueran soles.
   const volver = useMutation({
-    mutationFn: (id: number) => api.editarMovimiento(id, { status: "confirmada" }),
+    mutationFn: (m: Movimiento) =>
+      api.editarMovimiento(m.id, {
+        status: m.currency !== "PEN" && m.direction !== "transferencia" ? "por_revisar" : "confirmada",
+      }),
     onSettled: refrescar,
   });
 
@@ -186,8 +191,8 @@ export function VistaDescartados() {
                 direccion={m.direction}
                 accion={
                   <Boton
-                    onClick={() => volver.mutate(m.id)}
-                    disabled={volver.isPending && volver.variables === m.id}
+                    onClick={() => volver.mutate(m)}
+                    disabled={volver.isPending && volver.variables?.id === m.id}
                   >
                     <RefreshCw size={14} /> Volver a contar
                   </Boton>

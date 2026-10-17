@@ -312,49 +312,6 @@ export interface PruebaParser {
   texto_normalizado: string | null;
 }
 
-export interface FilaPrevista {
-  fecha: string;
-  columna: string;
-  monto: number;
-  direccion: Direccion;
-  categoria: string | null;
-  necesidad: Necesidad | null;
-  observacion: string | null;
-  origen_categoria: "columna" | "observacion";
-}
-
-export interface AnalisisExcel {
-  hoja: string;
-  hojas_disponibles: string[];
-  columnas_detectadas: string[];
-  columnas_importadas: string[];
-  columnas_derivadas: string[];
-  columnas_sin_mapeo: string[];
-  filas_leidas: number;
-  filas_con_fecha: number;
-  movimientos: number;
-  rescatados_por_observacion: number;
-  sin_clasificar: number;
-  desde: string | null;
-  hasta: string | null;
-  total_ingresos: number;
-  total_gastos: number;
-  avisos: string[];
-  muestra: FilaPrevista[];
-}
-
-export interface LoteImportacion {
-  id: number;
-  filename: string;
-  sheet: string;
-  rows_read: number;
-  created_count: number;
-  duplicated_count: number;
-  desde: string | null;
-  hasta: string | null;
-  created_at: string;
-}
-
 const BASE = "/api";
 
 export class ErrorApi extends Error {
@@ -442,8 +399,10 @@ export const api = {
   marcarRevisado: (id: number) =>
     pedir<Movimiento>(`/movimientos/${id}/revisado`, { method: "POST" }),
   ultimaModificacion: () => pedir<UltimaModificacion | null>("/movimientos/ultima-modificacion"),
+  /** `sin_importe_en_soles`: cobros en otra moneda que no se confirmaron porque
+   *  falta escribir los soles; siguen en la bandeja. */
   editarLote: (datos: Record<string, unknown>) =>
-    pedir<{ afectados: number }>("/movimientos/lote", {
+    pedir<{ afectados: number; sin_importe_en_soles: number }>("/movimientos/lote", {
       method: "POST",
       body: JSON.stringify(datos),
     }),
@@ -455,28 +414,6 @@ export const api = {
   editarRegla: (id: number, datos: Partial<Regla>) =>
     pedir<Regla>(`/reglas/${id}`, { method: "PATCH", body: JSON.stringify(datos) }),
   borrarRegla: (id: number) => pedir<void>(`/reglas/${id}`, { method: "DELETE" }),
-
-  analizarExcel: (archivo: File, hoja?: string) => {
-    const fd = new FormData();
-    fd.append("archivo", archivo);
-    if (hoja) fd.append("hoja", hoja);
-    return subir<AnalisisExcel>("/importar/excel/analizar", fd);
-  },
-  importarExcel: (archivo: File, opciones: { hoja?: string; cuenta_id?: number | null; usar_observaciones: boolean }) => {
-    const fd = new FormData();
-    fd.append("archivo", archivo);
-    if (opciones.hoja) fd.append("hoja", opciones.hoja);
-    if (opciones.cuenta_id) fd.append("cuenta_id", String(opciones.cuenta_id));
-    fd.append("usar_observaciones", String(opciones.usar_observaciones));
-    return subir<LoteImportacion>("/importar/excel", fd);
-  },
-  lotesImportacion: () => pedir<LoteImportacion[]>("/importar/lotes"),
-  /** Con filas corregidas por ti responde 409 salvo que confirmes `incluirProtegidos`. */
-  deshacerImportacion: (id: number, incluirProtegidos = false) =>
-    pedir<{ borrados: number }>(
-      `/importar/lotes/${id}${qs({ incluir_protegidos: incluirProtegidos || undefined })}`,
-      { method: "DELETE" },
-    ),
 
   presupuestos: () => pedir<PresupuestoConfig[]>("/presupuestos"),
   guardarPresupuesto: (datos: { category_id: number; amount: number }) =>
@@ -546,7 +483,6 @@ export const api = {
     return subir<ImportacionSeguimiento>("/seguimiento/importar", fd);
   },
 
-  config: () => pedir<ConfigApp>("/config"),
   respaldos: () => pedir<EstadoRespaldos>("/respaldos"),
   crearRespaldo: () => pedir<Respaldo>("/respaldos", { method: "POST" }),
   /** "Lo borre a proposito": apaga el aviso de movimientos desaparecidos. */
@@ -793,11 +729,6 @@ export interface EntradaPapelera {
   comercio: string | null;
   categoria_id: number | null;
   notas: string | null;
-}
-
-/** Interruptores que decide el servidor con variables de entorno. */
-export interface ConfigApp {
-  importar_excel: boolean;
 }
 
 export interface Respaldo {
