@@ -22,7 +22,7 @@ categorías de dos niveles y un campo que mide lo que antes anotabas como
 ## Arquitectura
 
 El backend está partido en módulos de negocio (`movimientos`, `clasificacion`, `correo`,
-`excel`, `analitica`, `seguimiento`), y todos tienen las mismas capas:
+`analitica`, `seguimiento`, `inversiones`), y todos tienen las mismas capas:
 
 ```
 app/<modulo>/
@@ -46,8 +46,9 @@ Las reglas completas están en `AGENTS.md`. Lo esencial:
   `DELETE` de un movimiento protegido, y otro copia todo lo borrado a una papelera que
   se restaura desde la interfaz.
 - **Una sola fuente de verdad por periodo.** Hasta el 31/08/2026 manda el Excel
-  histórico; desde el 01/09/2026, los correos y lo registrado a mano. La fecha vive en
-  un único sitio (`backend/app/compartido/corte.py`), así nada se cuenta dos veces.
+  histórico, ya importado entero (el importador se retiró en oct. 2026); desde el
+  01/09/2026, los correos y lo registrado a mano. La fecha vive en un único sitio
+  (`backend/app/compartido/corte.py`), así nada se cuenta dos veces.
 - **El dinero se guarda en céntimos enteros**, nunca en coma flotante.
 - **Las pruebas nunca tocan la base real**: `conftest.py` las aísla en una temporal.
 
@@ -136,7 +137,8 @@ arriba en todas las pantallas.
   estuvo apagado dos semanas, la copia sale en cuanto vuelve a encenderse.
 - **Antes de que el arranque cambie la base** (versiones de esquema pendientes,
   migraciones de datos). Si esa copia falla, la app no arranca.
-- **Antes de importar un Excel, de deshacer una importación** y de `scripts/datos_demo.py`.
+- **Antes de importar estados de cuenta de Hapi o el historial de Seguimiento** y de
+  `scripts/datos_demo.py`.
 - **A mano:** botón *Hacer una copia ahora*, o `curl -X POST http://localhost:8080/api/respaldos`.
 
 **Qué se conserva**
@@ -356,29 +358,6 @@ esa misma página de Google.
 
 ---
 
-## Importar tu Excel
-
-Está **apagado por defecto** (`IMPORTAR_EXCEL_HABILITADO=false`). El Excel ya está
-importado hasta el 31/08/2026 y desde setiembre los gastos llegan por correo: otro archivo
-con filas nuevas los duplicaría.
-
-Para importar a propósito:
-
-1. Pon `IMPORTAR_EXCEL_HABILITADO=true` en el `.env` y reinicia (`docker compose up -d`).
-2. Abre **Importar Excel** en el menú y sube el archivo. Primero se analiza sin escribir
-   nada; solo importa cuando lo confirmas.
-3. Vuelve a ponerlo en `false` al terminar.
-
-El importador convierte el formato ancho (una fila por día, una columna por tipo de gasto)
-al formato largo. Las columnas *Gastos totales* y *Beneficios* **no** se importan: son
-derivadas y el backend las recalcula. Es idempotente (importar dos veces no duplica) y
-cada importación se deshace entera desde la misma pantalla.
-
-> El antiguo `scripts/importar_excel.py` se retiró en set. 2026: no respetaba el
-> interruptor ni el corte de entonces (31/07) y podía duplicar gastos.
-
----
-
 ## Las pantallas
 
 | Pantalla | Para qué |
@@ -391,7 +370,6 @@ cada importación se deshace entera desde la misma pantalla.
 | **Por revisar** | Bandeja de triaje: lo que cambia una cifra y la app no puede decidir sola (comercio desconocido, posible duplicado, cobro en otra moneda) |
 | **Presupuesto** | Topes mensuales por categoría y meta de ahorro (opcionales) |
 | **Correo** | Estado de la conexión, sincronización, correos sin parsear y laboratorio de patrones |
-| **Importar Excel** | Solo aparece con `IMPORTAR_EXCEL_HABILITADO=true` |
 | **Reglas** | Tus reglas de clasificación, por prioridad |
 | **Cuentas y copias** | Cuentas y últimos 4 dígitos de cada tarjeta, categorías, y el estado de los respaldos |
 

@@ -1,4 +1,4 @@
-"""El puerto `LectorDeLibro` con openpyxl."""
+"""El puerto `LectorDeLibro` con openpyxl: lee el historial de saldos de un Excel."""
 from __future__ import annotations
 
 import io

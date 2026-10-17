@@ -59,12 +59,6 @@ class Settings(BaseSettings):
     # A donde vuelve el navegador despues de aceptar el consentimiento.
     app_base_url: str = "http://localhost:5173"
 
-    # Importar Excel: apagado por defecto. Hasta el 31/08/2026 la fuente de verdad
-    # es el Excel y ya esta importado; desde el 01/09/2026 lo son los correos y los
-    # registros manuales. Importar otro Excel con filas de agosto en adelante
-    # duplicaria esos gastos, asi que la seccion solo se enciende a proposito.
-    importar_excel_habilitado: bool = False
-
     # Copias de seguridad de la base. Cada cuantos dias como minimo (0 = nunca),
     # cuantas se conservan (0 = todas) y en que carpeta (vacio = <DATA_DIR>/respaldos).
     respaldo_cada_dias: int = Field(default=7, ge=0)

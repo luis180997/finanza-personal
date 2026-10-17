@@ -42,6 +42,7 @@ class ServicioMovimientos:
         clasificador: Clasificador,
         uow: UnidadDeTrabajo,
         zona: ZoneInfo,
+        moneda_base: str,
     ):
         self.repo = repo
         self.cuentas = cuentas
@@ -49,6 +50,7 @@ class ServicioMovimientos:
         self.clasificador = clasificador
         self.uow = uow
         self.zona = zona
+        self.moneda_base = moneda_base
 
     # ------------------------------------------------------------------ apoyo
     def _exigir_que_existan(self, category_id: int | None, *cuentas: int | None) -> None:
@@ -123,7 +125,7 @@ class ServicioMovimientos:
         estado_elegido = cambios.get("status")
 
         corregir(tx, cambios, self.zona)
-        confirmar_correccion(tx, categoria_elegida, estado_elegido)
+        confirmar_correccion(tx, categoria_elegida, estado_elegido, self.moneda_base)
         if hereda_necesidad(tx, categoria_elegida, "necessity" in cambios):
             cat = self.categorias.obtener(categoria_elegida)
             if cat:
@@ -158,19 +160,22 @@ class ServicioMovimientos:
         category_id: int | None,
         necessity: Necessity | None,
         status: TxStatus | None,
-    ) -> int:
+    ) -> tuple[int, int]:
+        """Devuelve (movimientos tocados, de ellos cuantos no se pudieron confirmar
+        porque les falta el importe en soles: siguen en la bandeja)."""
         self._exigir_que_existan(category_id)
-        afectados = 0
+        afectados = sin_soles = 0
         for tx_id in ids:
             tx = self.repo.obtener(tx_id)
             if not tx:
                 continue
-            aplicar_lote(tx, category_id, necessity, status)
+            if not aplicar_lote(tx, category_id, necessity, status, self.moneda_base):
+                sin_soles += 1
             proteger(tx, reloj.ahora_utc())
             self.repo.agregar(tx)
             afectados += 1
         self.uow.confirmar()
-        return afectados
+        return afectados, sin_soles
 
     def borrar(self, tx_id: int) -> None:
         """Borrar significa dos cosas segun de donde viene el movimiento.

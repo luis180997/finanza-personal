@@ -6,10 +6,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from app.plataforma.config import PROJECT_DIR, settings
+from app.plataforma.config import PROJECT_DIR
 from app.main import app
-from app.compartido.tipos import Necessity
-from app.excel.dominio.mapeo import clasificar_observacion
 
 
 @pytest.fixture(scope="module")
@@ -18,20 +16,37 @@ def cliente():
         yield c
 
 
-def test_importar_excel_se_apaga_en_el_servidor_y_no_solo_en_el_menu(cliente, monkeypatch):
-    monkeypatch.setattr(settings, "importar_excel_habilitado", False)
-    assert cliente.get("/api/config").json() == {"importar_excel": False}
-    r = cliente.get("/api/importar/lotes")
-    assert r.status_code == 403
-    assert "IMPORTAR_EXCEL_HABILITADO" in r.json()["detail"]
-
-    monkeypatch.setattr(settings, "importar_excel_habilitado", True)
-    assert cliente.get("/api/config").json() == {"importar_excel": True}
-    assert cliente.get("/api/importar/lotes").status_code == 200
-
-
 def test_la_comparativa_excel_ya_no_existe(cliente):
     assert cliente.get("/api/comparativa").status_code == 404
+
+
+def test_no_se_lee_el_correo_dos_veces_a_la_vez(cliente, monkeypatch):
+    """Pulsar "Sincronizar" mientras corria la automatica leia los mismos correos a
+    la vez. Ahora el segundo espera su turno: la interfaz avisa, la tarea se salta."""
+    from app.correo.adaptadores import fabrica as correo
+    from app.plataforma import programador
+
+    def no_deberia_leer(*_):
+        raise AssertionError("se leyo el correo con otra lectura en curso")
+
+    with correo.en_exclusiva() as libre:
+        assert libre
+        for ruta in ("/api/gmail/sincronizar", "/api/gmail/reparsear"):
+            r = cliente.post(ruta)
+            assert r.status_code == 409 and "en curso" in r.json()["detail"], ruta
+        monkeypatch.setattr(correo, "sincronizador", no_deberia_leer)
+        programador._sincronizar_correo()          # la automatica se salta su turno
+        monkeypatch.undo()
+
+    # Terminada la otra, se puede volver a leer
+    assert cliente.post("/api/gmail/reparsear").status_code == 200
+
+
+def test_la_importacion_del_excel_ya_no_existe(cliente):
+    """Retirada el 17/10/2026: el Excel ya estaba entero dentro (hasta el 31/08/2026)."""
+    assert cliente.get("/api/importar/lotes").status_code == 404
+    assert cliente.post("/api/importar/excel/analizar").status_code == 404
+    assert cliente.get("/api/config").status_code == 404
 
 
 def test_un_ano_imposible_se_rechaza_diciendo_por_que(cliente):
@@ -68,18 +83,6 @@ def test_respaldo_manual_por_api_en_la_carpeta_temporal(cliente):
     assert estado["activo"] is False            # RESPALDO_CADA_DIAS=0 en conftest
     # Nunca la carpeta de respaldos reales
     assert Path(estado["carpeta"]).resolve() != (PROJECT_DIR / "data" / "respaldos").resolve()
-
-
-def test_una_nota_de_gasto_innecesario_no_se_fuerza_a_una_subcategoria():
-    """"Gasto innecesario y cafe" es evitable, pero no se sabe cuanto fue cafe."""
-    assert clasificar_observacion("Gasto innecesario y cafe") == (None, Necessity.evitable)
-    assert clasificar_observacion("gastos innecesarios, cafe starbucks") == (
-        None, Necessity.evitable,
-    )
-    assert clasificar_observacion("cafe starbucks") == ("Cafe", Necessity.discrecional)
-    assert clasificar_observacion("Torta") == ("Snacks", Necessity.discrecional)
-    # Cafe y torta en la misma nota: dos categorias, un solo importe. No se adivina.
-    assert clasificar_observacion("Café y torta") == (None, None)
 
 
 @pytest.mark.parametrize("comercio, esperada", [

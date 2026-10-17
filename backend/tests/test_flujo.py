@@ -157,6 +157,23 @@ def test_correccion_manual_alimenta_la_memoria_de_comercio(cliente):
     assert segundo["category_name"] == "Restaurante"
 
 
+def test_la_memoria_cuenta_por_categoria_aunque_cambie_la_necesidad(cliente):
+    """Contadas por pareja categoria-necesidad, 2 Cine esencial + 2 Cine discrecional
+    perdian contra 3 Regalos: los 4 votos de Cine se partian en dos montones."""
+    cine, regalos = _id_categoria(cliente, "Cine y eventos"), _id_categoria(cliente, "Regalos")
+    votos = [(cine, "esencial")] * 2 + [(cine, "discrecional")] * 2 + [(regalos, "evitable")] * 3
+    for categoria, necesidad in votos:
+        cliente.post("/api/movimientos", json={
+            "amount": 10, "merchant": "TIENDA MEMORIA VOTOS", "category_id": categoria,
+            "necessity": necesidad, "occurred_at": "2026-09-06T12:00:00",
+        })
+    nuevo = cliente.post("/api/movimientos", json={
+        "amount": 10, "merchant": "TIENDA MEMORIA VOTOS", "occurred_at": "2026-09-07T12:00:00",
+    }).json()
+    assert nuevo["category_name"] == "Cine y eventos"
+    assert nuevo["necessity"] in ("esencial", "discrecional")
+
+
 def test_filtros_y_paginado(cliente):
     r = cliente.get("/api/movimientos", params={
         "desde": "2026-09-01", "hasta": "2026-09-30",
@@ -453,123 +470,7 @@ def test_sin_historial_no_se_inventa_proyeccion(cliente):
     assert r["meta_ahorro"] is None or r["meta_ahorro"]["ahorro_proyectado"] is None
 
 
-# ------------------------------------------------------------------- importador
-def _excel_de_prueba() -> bytes:
-    """Reproduce la estructura real del Excel del usuario, incluidas las erratas de
-    la columna Observaciones."""
-    import io
-
-    from openpyxl import Workbook
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Ingresos y gastos"
-    ws.append(["Fecha", "Ingresos", "Alimentos", "Transporte", "Taxi",
-               "Deliverry", "Otros gastos", "Gastos totales", "Observaciones", "Beneficios"])
-    ws.append([date(2026, 1, 5), 0, 15, 0, None, None, 0, 15, "Café", 15])
-    ws.append([date(2026, 1, 6), 0, 0, 0, None, None, 63, 63, "Gastos inncesarios", -63])
-    ws.append([date(2026, 1, 7), 0, 0, 0, None, None, 305, 305, "Pago del ICPNA", -305])
-    ws.append([date(2026, 1, 8), 0, 0, 0, None, None, 44.7, 44.7, "Compras en Plaza Vea", -44.7])
-    ws.append([date(2026, 1, 9), 1722.45, 0, 0, None, None, 0, 0, "Pago del mes", 1722.45])
-    ws.append([date(2026, 1, 10), 0, 13, 13.5, 20, 35, 0, 81.5, None, -81.5])
-    ws.append([date(2026, 1, 11), 0, 0, 0, None, None, 0, 0, None, 0])
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def test_analizar_no_escribe_nada(cliente):
-    antes = cliente.get("/api/movimientos", params={"tamano": 1}).json()["total"]
-    r = cliente.post(
-        "/api/importar/excel/analizar",
-        files={"archivo": ("prueba.xlsx", _excel_de_prueba(),
-                           "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-    ).json()
-    assert r["hoja"] == "Ingresos y gastos"
-    assert r["filas_con_fecha"] == 7
-    assert cliente.get("/api/movimientos", params={"tamano": 1}).json()["total"] == antes
-
-
-def test_las_columnas_derivadas_no_se_importan(cliente):
-    """'Gastos totales' y 'Beneficios' se calculan solas. Importarlas duplicaria
-    todos los importes: en el archivo real cuadran al centimo."""
-    r = cliente.post(
-        "/api/importar/excel/analizar",
-        files={"archivo": ("prueba.xlsx", _excel_de_prueba(), "application/octet-stream")},
-    ).json()
-    assert set(r["columnas_derivadas"]) == {"gastos totales", "beneficios"}
-    for m in r["muestra"]:
-        assert m["columna"] not in ("gastos totales", "beneficios")
-
-
-def test_las_observaciones_rescatan_otros_gastos(cliente):
-    """El 75% del gasto historico esta en 'Otros gastos'. Las notas dicen que fue."""
-    r = cliente.post(
-        "/api/importar/excel/analizar",
-        files={"archivo": ("prueba.xlsx", _excel_de_prueba(), "application/octet-stream")},
-    ).json()
-    por_nota = {m["observacion"]: m for m in r["muestra"] if m["origen_categoria"] == "observacion"}
-    assert por_nota["Pago del ICPNA"]["categoria"] == "Cursos"
-    assert por_nota["Compras en Plaza Vea"]["categoria"] == "Mercado y supermercado"
-    assert por_nota["Pago del mes"]["categoria"] == "Sueldo"
-    assert r["rescatados_por_observacion"] >= 3
-
-
-def test_erratas_de_gasto_innecesario(cliente):
-    """En el archivo real aparece como 'Gastos inncesarios', 'Gasto Innecesario',
-    'gastos innecesarios'... Todas tienen que marcar evitable."""
-    from app.excel.dominio.mapeo import clasificar_observacion
-
-    for texto in ["Gasto innecesario", "Gastos inncesarios", "gastos innecesarios",
-                  "Gasto Innecesario", "Gasto inncesario", "Café, Gastos inncesarios"]:
-        _, necesidad = clasificar_observacion(texto)
-        assert necesidad is not None and necesidad.value == "evitable", texto
-
-
-def test_importar_y_deshacer(cliente):
-    contenido = _excel_de_prueba()
-    r = cliente.post(
-        "/api/importar/excel",
-        files={"archivo": ("prueba.xlsx", contenido, "application/octet-stream")},
-    )
-    assert r.status_code == 201, r.text
-    lote = r.json()
-    assert lote["created_count"] > 0
-    assert lote["desde"] == "2026-01-05"
-    assert lote["hasta"] == "2026-01-11"
-
-    enero = cliente.get(
-        "/api/movimientos", params={"desde": "2026-01-01", "hasta": "2026-01-31", "tamano": 100}
-    ).json()
-    assert enero["total"] == lote["created_count"]
-    # el ingreso "Pago del mes" entra como ingreso, no como gasto
-    assert enero["suma_ingresos"] == 1722.45
-
-    # re-importar el mismo archivo no duplica
-    r2 = cliente.post(
-        "/api/importar/excel",
-        files={"archivo": ("prueba.xlsx", contenido, "application/octet-stream")},
-    ).json()
-    assert r2["created_count"] == 0
-    assert r2["duplicated_count"] == lote["created_count"]
-
-    cliente.delete(f"/api/importar/lotes/{r2['id']}")
-    borrados = cliente.delete(f"/api/importar/lotes/{lote['id']}").json()["borrados"]
-    assert borrados == lote["created_count"]
-    despues = cliente.get(
-        "/api/movimientos", params={"desde": "2026-01-01", "hasta": "2026-01-31"}
-    ).json()
-    assert despues["total"] == 0
-
-
-def test_rechaza_formatos_que_no_son_excel(cliente):
-    r = cliente.post(
-        "/api/importar/excel/analizar",
-        files={"archivo": ("notas.txt", b"hola", "text/plain")},
-    )
-    assert r.status_code == 400
-
-
+# ------------------------------------------------------------------ purga de correos
 def test_purga_de_cuerpos_antiguos():
     """Pasados 90 dias se vacia el texto pero se conserva la ficha: si se borrara
     la fila entera, el correo se volveria a procesar en la siguiente sync."""
@@ -605,25 +506,6 @@ def test_purga_de_cuerpos_antiguos():
         assert viejo.body_text == ""          # contenido borrado
         assert viejo.subject == "Consumo antiguo"   # ficha conservada
         assert reciente.body_text == "CUERPO RECIENTE"
-
-
-def test_una_nota_ambigua_no_se_adivina():
-    """El caso que lo demostro: una fila de varios miles de soles con la nota
-    "Claro, Mestria" acabo entera en "Plan movil", inflando esa categoria al 32%
-    del anio. Ese dia se pago el recibo de Claro (decenas de soles) Y una maestria
-    (miles): la nota describe el dia, pero el importe es uno solo."""
-    from app.excel.dominio.mapeo import clasificar_observacion
-
-    cat, _ = clasificar_observacion("Claro, Mestria")
-    assert cat is None, "con dos pistas distintas no se puede elegir una"
-
-    # cada una por separado si se reconoce
-    assert clasificar_observacion("Claro")[0] == "Plan movil"
-    assert clasificar_observacion("Mestria")[0] == "Cursos"
-
-    # y la marca de evitable sobrevive aunque la categoria quede sin decidir
-    _, necesidad = clasificar_observacion("Gasto Innecesario, Cine, Disney Plus")
-    assert necesidad is not None and necesidad.value == "evitable"
 
 
 # ------------------------------------------------------------------------ IMAP

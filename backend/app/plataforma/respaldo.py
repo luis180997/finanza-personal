@@ -304,7 +304,7 @@ def respaldar(
 
 def aceptar_perdida(database_url: str, carpeta: Path, ahora: datetime | None = None) -> int:
     """Da por buenos los movimientos que tiene ahora la base: lo que falta lo borraste
-    tu a proposito (deshacer una importacion, limpiar datos de prueba).
+    tu a proposito (borrar registros tuyos, limpiar datos de prueba).
 
     Sin esto, el aviso de movimientos desaparecidos seguia en pantalla hasta la
     siguiente copia, hasta 7 dias, y un aviso que no se puede apagar se aprende a

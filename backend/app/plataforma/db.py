@@ -26,7 +26,6 @@ def registrar_tablas() -> None:
     import app.analitica.dominio.entidades  # noqa: F401
     import app.clasificacion.dominio.entidades  # noqa: F401
     import app.correo.dominio.entidades  # noqa: F401
-    import app.excel.dominio.entidades  # noqa: F401
     import app.inversiones.dominio.entidades  # noqa: F401
     import app.movimientos.dominio.entidades  # noqa: F401
     import app.plataforma.kv  # noqa: F401

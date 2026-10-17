@@ -163,8 +163,12 @@ def ultima_modificacion(servicio: ServicioMovimientos = Depends(_movimientos)):
 
 @router.post("/movimientos/lote", tags=["movimientos"])
 def editar_lote(datos: BulkAction, servicio: ServicioMovimientos = Depends(_movimientos)):
-    afectados = servicio.editar_lote(datos.ids, datos.category_id, datos.necessity, datos.status)
-    return {"afectados": afectados}
+    afectados, sin_soles = servicio.editar_lote(
+        datos.ids, datos.category_id, datos.necessity, datos.status,
+    )
+    # Los cobros en otra moneda sin su importe en soles no se confirman: siguen en la
+    # bandeja, y la interfaz avisa de cuantos se quedaron.
+    return {"afectados": afectados, "sin_importe_en_soles": sin_soles}
 
 
 @router.delete("/movimientos/{tx_id}", status_code=204, tags=["movimientos"])

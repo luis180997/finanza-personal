@@ -285,50 +285,6 @@ def test_borrar_una_categoria_no_deja_sin_categoria_a_tus_registros(cliente):
     assert vivo["category_id"] == destino and vivo["locked_by_user"] is True
 
 
-def test_deshacer_una_importacion_pregunta_antes_de_borrar_tus_correcciones(cliente):
-    """Y no revienta si otro movimiento apuntaba a una de sus filas como duplicado."""
-    import io
-
-    from openpyxl import Workbook
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Ingresos y gastos"
-    ws.append(["Fecha", "Ingresos", "Alimentos", "Observaciones"])
-    for dia in range(1, 13):         # 12 filas: un borrado que el aviso de copias notaria
-        ws.append([date(2025, 3, dia), 0, 20 + dia + 0.5, None])
-    buf = io.BytesIO()
-    wb.save(buf)
-    archivo = {"archivo": ("proteccion.xlsx", buf.getvalue(), "application/octet-stream")}
-    lote = cliente.post("/api/importar/excel", files=archivo).json()
-    assert lote["created_count"] == 12
-
-    marzo = {"desde": "2025-03-01", "hasta": "2025-03-31", "origen": "excel"}
-    corregida, otra = cliente.get("/api/movimientos", params=marzo).json()["items"][:2]
-    cliente.patch(f"/api/movimientos/{corregida['id']}", json={"notes": "la corregi yo"})
-    apunta = cliente.post("/api/movimientos", json={
-        "amount": 32.5, "direction": "gasto", "merchant": "apunta al excel",
-        "occurred_at": "2025-03-04T13:00:00",
-    }).json()
-    with Session(engine) as s:
-        tx = s.get(Transaction, apunta["id"])
-        tx.duplicate_of_id = otra["id"]
-        s.add(tx)
-        s.commit()
-
-    r = cliente.delete(f"/api/importar/lotes/{lote['id']}")
-    assert r.status_code == 409 and "corregiste" in r.json()["detail"]
-    assert len(cliente.get("/api/movimientos", params=marzo).json()["items"]) == 12
-
-    r = cliente.delete(f"/api/importar/lotes/{lote['id']}", params={"incluir_protegidos": True})
-    assert r.status_code == 200, r.text
-    assert r.json()["borrados"] == 12
-    with Session(engine) as s:
-        assert s.get(Transaction, apunta["id"]).duplicate_of_id is None
-    # Deshacer fue una orden tuya: el aviso de copias no lo toma por una perdida
-    assert cliente.get("/api/respaldos").json()["perdida_sin_aceptar"] is False
-
-
 def test_un_cobro_en_dolares_espera_a_que_escribas_los_soles(cliente):
     """El BCP avisa "$ 8.85" y debita soles, pero el correo no dice cuantos."""
     from app.correo.dominio.correo import RawEmail
@@ -358,6 +314,54 @@ def test_un_cobro_en_dolares_espera_a_que_escribas_los_soles(cliente):
     assert corregido["locked_by_user"] is True
     assert all(m["clave"] != "moneda_extranjera" for m in corregido["motivos"])
     assert cliente.patch(f"/api/movimientos/{tx.id}", json={"currency": None}).status_code == 422
+
+
+def test_un_cobro_en_dolares_no_se_confirma_sin_sus_soles(cliente):
+    """Confirmarlo sin los soles lo dejaba sumando como si fueran soles para siempre,
+    y fuera de la bandeja, donde nada volvia a pedirlos."""
+    from app.correo.dominio.correo import RawEmail
+
+    def cobro(gmail_id: str, operacion: str) -> Transaction:
+        _ingerir(RawEmail(
+            gmail_id=gmail_id,
+            sender="notificaciones@notificacionesbcp.com.pe",
+            subject="Realizaste un consumo con tu Tarjeta de Debito BCP",
+            body=(
+                "Realizaste un consumo de $ 12.40 con tu Tarjeta de Debito BCP en APPSTORE.\n"
+                "Fecha y hora\n13 de setiembre de 2026 - 09:15 AM\nEmpresa\nAPPSTORE\n"
+                f"Numero de operacion\n{operacion}"
+            ),
+            received_at=datetime(2026, 9, 13, 9, 15),
+        ))
+        (tx,) = _movs(operacion)
+        assert tx.currency == "USD" and tx.status == TxStatus.por_revisar
+        return tx
+
+    # 1. El boton Confirmar de la ficha: rechazado, con el motivo
+    uno = cobro("dolares-confirmar", "700101")
+    r = cliente.patch(f"/api/movimientos/{uno.id}", json={"status": "confirmada"})
+    assert r.status_code == 400 and "soles" in r.json()["detail"]
+    # Con los soles en la misma edicion, si
+    r = cliente.patch(f"/api/movimientos/{uno.id}",
+                      json={"amount": 45.6, "currency": "PEN", "status": "confirmada"})
+    assert r.status_code == 200 and r.json()["status"] == "confirmada"
+
+    # 2. Elegir categoria desde Movimientos: se guarda, pero sigue en la bandeja
+    dos = cobro("dolares-categoria", "700102")
+    streaming = _id_categoria(cliente, "Streaming")
+    r = cliente.patch(f"/api/movimientos/{dos.id}", json={"category_id": streaming})
+    assert r.status_code == 200
+    assert r.json()["category_id"] == streaming and r.json()["status"] == "por_revisar"
+
+    # 3. Confirmar en lote: se confirman los demas y este se queda, contado aparte
+    tres = cobro("dolares-lote", "700103")
+    en_soles = _manual(cliente, 20, "LOTE EN SOLES")
+    cliente.patch(f"/api/movimientos/{en_soles['id']}", json={"status": "por_revisar"})
+    r = cliente.post("/api/movimientos/lote", json={"ids": [tres.id, en_soles["id"]],
+                                                    "status": "confirmada"})
+    assert r.json() == {"afectados": 2, "sin_importe_en_soles": 1}
+    pendientes = {m["id"] for m in cliente.get("/api/movimientos/revision").json()}
+    assert tres.id in pendientes and en_soles["id"] not in pendientes
 
 
 def test_un_correo_que_no_genera_movimiento_no_se_reprocesa_en_cada_sincronizacion(cliente):

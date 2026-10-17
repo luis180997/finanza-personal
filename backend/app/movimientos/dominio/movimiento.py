@@ -20,7 +20,7 @@ from app.compartido.comercio import normalize_merchant
 from app.compartido.corte import FECHA_INICIO_AUTOMATIZADO, FECHA_INICIO_AUTOMATIZADO_TEXTO
 from app.compartido.dinero import to_cents
 from app.compartido.errores import DatoInvalido
-from app.compartido.tipos import Necessity, PaymentMethod, Source, TxStatus
+from app.compartido.tipos import Direction, Necessity, PaymentMethod, Source, TxStatus
 from app.movimientos.dominio.entidades import AccountType, Transaction
 from app.movimientos.dominio.huella import build_hash
 
@@ -127,24 +127,6 @@ def soltar_duplicado(otro: Transaction, borrado_id: int) -> None:
     otro.notes = f"{otro.notes}\n{aviso}" if otro.notes else aviso
 
 
-def soltar_duplicado_de_lote(otro: Transaction, lote_id: int) -> None:
-    """`otro` estaba marcado como posible duplicado de una fila del Excel que se va
-    con su lote. Mismo criterio que `soltar_duplicado`: el aviso va detras."""
-    aviso = (
-        "El movimiento del Excel del que podia ser duplicado se borro al deshacer "
-        f"la importacion #{lote_id}."
-    )
-    otro.duplicate_of_id = None
-    otro.notes = f"{otro.notes}\n{aviso}" if otro.notes else aviso
-
-
-def preparar_para_deshacer_lote(tx: Transaction) -> None:
-    """Deshacer una importacion es una orden tuya sobre todo el lote: sin quitar la
-    proteccion, la base rechazaria borrar las filas que corregiste (trigger)."""
-    tx.duplicate_of_id = None
-    tx.locked_by_user = False
-
-
 # ------------------------------------------------------------------- fechas y corte
 def a_hora_local(momento: datetime, zona: ZoneInfo) -> datetime:
     """Una fecha sin zona se toma como hora local."""
@@ -173,6 +155,21 @@ def quitar_categoria(tx: Transaction, destino_id: int | None) -> None:
     tx.category_id = None
     if tx.status == TxStatus.confirmada:
         tx.status = TxStatus.por_revisar
+
+
+# --------------------------------------------------------------------- moneda
+FALTA_IMPORTE_EN_SOLES = (
+    "Este cobro llego en otra moneda y todavia no tiene su importe en soles. Escribelo "
+    "antes de confirmarlo: si no, se sumaria como si fueran soles."
+)
+
+
+def falta_importe_en_soles(tx: Transaction, moneda_base: str) -> bool:
+    """El BCP avisa algunos cobros en dolares ("$ 8.85") y los debita en soles, pero el
+    correo no dice cuantos. Hasta que escribas los soles no puede quedar confirmado:
+    los totales lo sumarian como si fueran soles. Una transferencia no, porque no
+    cuenta como gasto ni como ingreso."""
+    return tx.currency != moneda_base and tx.direction != Direction.transferencia
 
 
 # --------------------------------------------------------------------- correccion
@@ -204,13 +201,21 @@ def corregir(tx: Transaction, cambios: dict, zona: ZoneInfo) -> None:
 
 def confirmar_correccion(
     tx: Transaction, categoria_elegida: int | None, estado_elegido: TxStatus | None,
+    moneda_base: str,
 ) -> None:
+    """Se llama despues de `corregir`: si en la misma edicion escribiste los soles,
+    el movimiento ya esta en la moneda base."""
+    sin_soles = falta_importe_en_soles(tx, moneda_base)
+    if estado_elegido == TxStatus.confirmada and sin_soles:
+        raise DatoInvalido(FALTA_IMPORTE_EN_SOLES)
+
     # Corregir a mano equivale a confirmar: asi la memoria de comercio aprende.
     # Salvo que quien edita diga explicitamente en que estado lo deja: la
     # bandeja de revision manda `status` para que la ficha no se desvanezca en
-    # cuanto eliges categoria, sin darte tiempo a marcar la necesidad.
+    # cuanto eliges categoria, sin darte tiempo a marcar la necesidad. Un cobro
+    # sin sus soles se queda en la bandeja aunque elijas categoria.
     if categoria_elegida is not None and estado_elegido is None:
-        tx.status = TxStatus.confirmada
+        tx.status = TxStatus.por_revisar if sin_soles else TxStatus.confirmada
 
     # Lo que toca una persona deja de ser dudoso, aunque siga en la bandeja: si
     # no, al elegir categoria el movimiento se quedaba en 0.3 y la propia ficha
@@ -233,11 +238,21 @@ def aplicar_lote(
     category_id: int | None,
     necessity: Necessity | None,
     status: TxStatus | None,
-) -> None:
-    """Confirmar, ignorar o marcar duplicado desde la bandeja tambien es decidir."""
+    moneda_base: str,
+) -> bool:
+    """Confirmar, ignorar o marcar duplicado desde la bandeja tambien es decidir.
+
+    Devuelve False si no lo pudo confirmar porque le falta el importe en soles: se
+    queda en la bandeja, con la categoria y la necesidad que elegiste.
+    """
     if category_id is not None:
         tx.category_id = category_id
     if necessity is not None:
         tx.necessity = necessity
-    tx.status = status or TxStatus.confirmada
     tx.confidence = 1.0
+    estado = status or TxStatus.confirmada
+    if estado == TxStatus.confirmada and falta_importe_en_soles(tx, moneda_base):
+        tx.status = TxStatus.por_revisar
+        return False
+    tx.status = estado
+    return True

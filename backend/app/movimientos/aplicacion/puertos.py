@@ -45,13 +45,6 @@ class RepositorioMovimientos(Protocol):
 
     def por_huella(self, huella: str) -> Transaction | None: ...
 
-    def del_lote(self, lote_id: int) -> list[Transaction]: ...
-
-    def protegidos_del_lote(self, lote_id: int) -> int: ...
-
-    def duplicados_de_fuera_del_lote(self, lote_id: int) -> list[Transaction]:
-        """Los de fuera del lote marcados como duplicado de una fila del lote."""
-
     def ids_por_huella(self, huellas: list[str]) -> dict[str, int]: ...
 
     def candidatos_mellizo(self, tx: Transaction) -> list[Transaction]:

@@ -9,10 +9,14 @@ from sqlmodel import Session, col, func, or_, select
 from app.clasificacion.dominio.entidades import Category
 from app.compartido.tipos import Direction, TxStatus
 from app.correo.dominio.entidades import EmailMessage
-from app.excel.dominio.entidades import ImportBatch
 from app.movimientos.aplicacion.puertos import FiltrosMovimientos, PaginaDeMovimientos
 from app.movimientos.dominio.duplicados import minuto_de
-from app.movimientos.dominio.entidades import Account, Transaction, TransactionPapelera
+from app.movimientos.dominio.entidades import (
+    Account,
+    ImportBatch,
+    Transaction,
+    TransactionPapelera,
+)
 from app.movimientos.dominio.papelera import FORANEAS
 
 
@@ -43,31 +47,6 @@ class MovimientosSqlite:
         return self.session.exec(
             select(Transaction).where(Transaction.dedupe_hash == huella)
         ).first()
-
-    def del_lote(self, lote_id: int) -> list[Transaction]:
-        return list(self.session.exec(
-            select(Transaction).where(Transaction.import_batch_id == lote_id)
-        ).all())
-
-    def protegidos_del_lote(self, lote_id: int) -> int:
-        return len(self.session.exec(
-            select(Transaction.id).where(
-                Transaction.import_batch_id == lote_id,
-                Transaction.locked_by_user == True,  # noqa: E712
-            )
-        ).all())
-
-    def duplicados_de_fuera_del_lote(self, lote_id: int) -> list[Transaction]:
-        del_lote = select(Transaction.id).where(Transaction.import_batch_id == lote_id)
-        return list(self.session.exec(
-            select(Transaction).where(
-                col(Transaction.duplicate_of_id).in_(del_lote),
-                or_(
-                    col(Transaction.import_batch_id).is_(None),
-                    Transaction.import_batch_id != lote_id,
-                ),
-            )
-        ).all())
 
     def ids_por_huella(self, huellas: list[str]) -> dict[str, int]:
         return dict(self.session.exec(
@@ -214,8 +193,13 @@ class CuentasSqlite:
         return self.session.exec(select(Account).where(Account.bank == "efectivo")).first()
 
     def tiene_movimientos(self, cuenta_id: int) -> bool:
+        """Tambien cuenta si es la cuenta de destino de una transferencia: solo se
+        miraba la de origen, y borrarla rompia la clave foranea con un 500."""
         return self.session.exec(
-            select(Transaction).where(Transaction.account_id == cuenta_id).limit(1)
+            select(Transaction.id).where(or_(
+                Transaction.account_id == cuenta_id,
+                Transaction.counter_account_id == cuenta_id,
+            )).limit(1)
         ).first() is not None
 
     def agregar(self, cuenta: Account) -> None:

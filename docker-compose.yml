@@ -68,11 +68,6 @@ services:
       SYNC_INTERVAL_MINUTES: ${SYNC_INTERVAL_MINUTES:-15}
       EMAIL_RETENTION_DAYS: ${EMAIL_RETENTION_DAYS:-90}
 
-      # --- Importar Excel ---
-      # Apagado por defecto: el Excel ya esta importado hasta el 31/08/2026 y otro
-      # con filas de setiembre en adelante duplicaria los gastos que traen los correos.
-      IMPORTAR_EXCEL_HABILITADO: ${IMPORTAR_EXCEL_HABILITADO:-false}
-
       # --- Copias de seguridad ---
       # Se copian en ./data/respaldos. Lo que cuenta es la fecha del ultimo
       # respaldo, no una hora fija: si el equipo estuvo apagado, la copia sale al

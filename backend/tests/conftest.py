@@ -25,8 +25,6 @@ os.environ["APP_ENV"] = "test"
 # de respaldos reales, y la poda borraria los buenos.
 os.environ["RESPALDO_CADA_DIAS"] = "0"
 os.environ["RESPALDO_DIR"] = str(Path(_TMP_DIR) / "respaldos")
-# La seccion esta apagada por defecto; los tests del importador la necesitan.
-os.environ["IMPORTAR_EXCEL_HABILITADO"] = "true"
 
 from app.plataforma.config import get_settings
 get_settings.cache_clear()

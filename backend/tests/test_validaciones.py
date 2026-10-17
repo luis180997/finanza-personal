@@ -2,7 +2,6 @@
 del 31/08/2026. Todo sobre la base temporal de conftest.py."""
 from __future__ import annotations
 
-import io
 from datetime import date, datetime
 
 import pytest
@@ -49,6 +48,56 @@ def test_una_categoria_o_cuenta_que_no_existe_da_404(cliente):
     assert cliente.patch(f"/api/movimientos/{mov['id']}", json={"category_id": 999999}).status_code == 404
     r = cliente.post("/api/movimientos/lote", json={"ids": [mov["id"]], "category_id": 999999})
     assert r.status_code == 404
+
+
+def test_un_importe_de_menos_de_un_centimo_se_rechaza(cliente):
+    """0.004 pasaba `gt=0` y se guardaba redondeado: S/ 0.00."""
+    for monto in (0.004, 0.005):
+        r = cliente.post("/api/movimientos", json={"amount": monto, "occurred_at": "2026-10-07T10:00:00"})
+        assert r.status_code == 422, (monto, r.text)
+    assert _manual(cliente, amount=0.01)["amount"] == 0.01
+    mov = _manual(cliente)
+    assert cliente.patch(f"/api/movimientos/{mov['id']}", json={"amount": 0.004}).status_code == 422
+    categoria = next(c["id"] for c in cliente.get("/api/categorias").json() if c["name"] == "Delivery")
+    r = cliente.put("/api/presupuestos", json={"category_id": categoria, "amount": 0.004})
+    assert r.status_code == 422
+
+
+def test_una_cuenta_de_destino_de_una_transferencia_no_se_borra(cliente):
+    """Solo se miraba la cuenta de origen: borrar la de destino daba un 500."""
+    origen = cliente.post("/api/cuentas", json={"name": "Validacion origen", "type": "debito"}).json()
+    destino = cliente.post("/api/cuentas", json={"name": "Validacion destino", "type": "debito"}).json()
+    _manual(cliente, direction="transferencia", account_id=origen["id"],
+            counter_account_id=destino["id"])
+    r = cliente.delete(f"/api/cuentas/{destino['id']}")
+    assert r.status_code == 409 and "Desactivala" in r.json()["detail"]
+
+
+def test_una_regla_con_una_categoria_que_no_existe_da_404(cliente):
+    r = cliente.post("/api/reglas", json={"name": "validacion", "value": "x", "set_category_id": 999999})
+    assert r.status_code == 404, r.text
+    regla = cliente.post("/api/reglas", json={"name": "validacion", "value": "x"}).json()
+    r = cliente.patch(f"/api/reglas/{regla['id']}",
+                      json={"name": "validacion", "value": "x", "set_category_id": 999999})
+    assert r.status_code == 404, r.text
+    cliente.delete(f"/api/reglas/{regla['id']}")
+
+
+def test_lo_que_rechace_la_base_se_explica_en_vez_de_dar_500():
+    """La red de seguridad de main.py, para los casos que ningun caso de uso previo."""
+    import sqlite3
+
+    from sqlalchemy.exc import IntegrityError
+
+    from app.main import explicar_rechazo
+
+    def rechazo(motivo: str) -> IntegrityError:
+        return IntegrityError("INSERT ...", {}, sqlite3.IntegrityError(motivo))
+
+    assert "no existe" in explicar_rechazo(rechazo("FOREIGN KEY constraint failed"))
+    assert "ya existe" in explicar_rechazo(rechazo("UNIQUE constraint failed: account.name"))
+    protegido = "Movimiento protegido: lo registraste o corregiste tu."
+    assert explicar_rechazo(rechazo(protegido)) == protegido
 
 
 def test_el_resumen_con_una_sola_fecha_avisa_en_vez_de_ignorarla(cliente):
@@ -107,72 +156,17 @@ def test_el_periodo_anterior_de_un_mes_es_el_mes_anterior_entero(desde, hasta, e
     assert (anterior.desde, anterior.hasta) == esperado
 
 
-def _excel(filas: list[list]) -> bytes:
-    from openpyxl import Workbook
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Ingresos y gastos"
-    ws.append(["Fecha", "Ingresos", "Alimentos", "Observaciones"])
-    for fila in filas:
-        ws.append(fila)
-    buf = io.BytesIO()
-    wb.save(buf)
-    return buf.getvalue()
-
-
-def test_el_importador_nunca_trae_filas_despues_del_corte(cliente):
-    contenido = _excel([
-        [date(2026, 8, 31), 0, 12.34, None],
-        [date(2026, 9, 1), 0, 56.78, None],
-        [date(2026, 10, 3), 0, 90.12, None],
-    ])
-    archivo = {"archivo": ("corte.xlsx", contenido, "application/octet-stream")}
-
-    analisis = cliente.post("/api/importar/excel/analizar", files=archivo).json()
-    assert analisis["movimientos"] == 1 and analisis["hasta"] == "2026-08-31"
-    assert any("31/08/2026" in a for a in analisis["avisos"])
-
-    # Ni aunque se pida expresamente una fecha posterior
-    r = cliente.post("/api/importar/excel", files=archivo, data={"fecha_hasta": "2026-12-31"})
-    assert r.status_code == 201, r.text
-    lote = r.json()
-    assert lote["created_count"] == 1
-    assert cliente.delete(f"/api/importar/lotes/{lote['id']}").json()["borrados"] == 1
-
-
-def test_el_importador_puede_traer_solo_un_mes(cliente):
-    """Para anadir agosto sin volver a leer lo ya importado: si una fila vieja se
-    hubiera retocado en el Excel, su huella cambiaria y entraria duplicada."""
-    contenido = _excel([
-        [date(2026, 7, 31), 0, 11.11, None],
-        [date(2026, 8, 1), 0, 22.22, None],
-        [date(2026, 8, 31), 0, 33.33, None],
-    ])
-    archivo = {"archivo": ("agosto.xlsx", contenido, "application/octet-stream")}
-    desde = {"fecha_desde": "2026-08-01"}
-
-    analisis = cliente.post("/api/importar/excel/analizar", files=archivo, data=desde).json()
-    assert analisis["movimientos"] == 2
-    assert (analisis["desde"], analisis["hasta"]) == ("2026-08-01", "2026-08-31")
-    assert any("anteriores al 01/08/2026" in a for a in analisis["avisos"])
-
-    r = cliente.post("/api/importar/excel", files=archivo, data=desde)
-    assert r.status_code == 201, r.text
-    lote = r.json()
-    assert lote["created_count"] == 2
-    assert (lote["desde"], lote["hasta"]) == ("2026-08-01", "2026-08-31")
-    assert cliente.delete(f"/api/importar/lotes/{lote['id']}").json()["borrados"] == 2
-
-
 def test_un_importe_con_formato_europeo_en_texto_no_se_lee_mal():
-    from app.excel.dominio.mapeo import numero as _num
+    """Lo usan los correos y el Excel del historial de Seguimiento."""
+    from decimal import Decimal
 
-    assert _num("1.234,56") == 1234.56
-    assert _num("1,234.56") == 1234.56
-    assert _num("S/ 39.63") == 39.63
-    assert _num(15) == 15.0
-    assert _num("") == 0.0
+    from app.compartido.dinero import parse_money
+
+    assert parse_money("1.234,56") == Decimal("1234.56")
+    assert parse_money("1,234.56") == Decimal("1234.56")
+    assert parse_money("S/ 39.63") == Decimal("39.63")
+    assert parse_money("15") == Decimal("15.00")
+    assert parse_money("") is None
 
 
 def test_a_mitad_de_mes_se_compara_con_los_mismos_dias_del_mes_anterior(cliente, monkeypatch):
@@ -222,13 +216,6 @@ def test_un_movimiento_con_fecha_imposible_no_estira_el_historial(cliente):
         with Session(engine) as s:
             s.delete(s.get(Transaction, raro_id))
             s.commit()
-
-
-def test_el_importador_ignora_filas_con_fechas_imposibles():
-    from app.excel.dominio.mapeo import fecha_de as _fecha
-
-    assert _fecha(date(1900, 1, 1)) is None
-    assert _fecha("15/03/2025") == date(2025, 3, 15)
 
 
 def test_los_meses_salen_en_castellano(cliente):

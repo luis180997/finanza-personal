@@ -1,4 +1,4 @@
-"""Interruptores que necesita la interfaz y copias de seguridad."""
+"""Copias de seguridad de la base, desde la interfaz."""
 from __future__ import annotations
 
 import sqlite3
@@ -9,15 +9,6 @@ from app.plataforma.config import settings
 from app.plataforma import respaldo
 
 router = APIRouter()
-
-
-@router.get("/config", tags=["sistema"])
-def config():
-    """Lo que la interfaz tiene que saber para mostrar u ocultar secciones.
-
-    Solo booleanos: ni rutas, ni credenciales, ni nada que no deba verse.
-    """
-    return {"importar_excel": settings.importar_excel_habilitado}
 
 
 @router.get("/respaldos", tags=["sistema"])

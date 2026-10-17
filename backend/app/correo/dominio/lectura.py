@@ -23,6 +23,7 @@ from app.correo.dominio.correo import ParsedTx, RawEmail
 from app.correo.dominio.entidades import EmailMessage, ParseStatus
 from app.movimientos.dominio.entidades import Account, Transaction
 from app.movimientos.dominio.huella import build_hash
+from app.movimientos.dominio.movimiento import falta_importe_en_soles
 
 # No se procesan correos anteriores a 2022 (requisito explicito).
 ANIO_PRIMER_CORREO = 2022
@@ -168,11 +169,10 @@ def contexto_de_clasificacion(
 
 
 def revisar_si_otra_moneda(tx: Transaction, moneda_base: str) -> None:
-    """El BCP avisa algunos cobros en dolares ("$ 8.85") y los debita en soles, pero el
-    correo no dice cuantos. Ni se da por bueno ni se inventa un tipo de cambio: va a
-    Por revisar para que escribas los soles que te cobraron (decision del 13/09/2026).
-    Una transferencia no, porque no cuenta como gasto ni como ingreso."""
-    if tx.currency != moneda_base and tx.direction != Direction.transferencia:
+    """Ni se da por bueno ni se inventa un tipo de cambio: va a Por revisar para que
+    escribas los soles que te cobraron (decision del 13/09/2026). La regla es la misma
+    que impide confirmarlo a mano (movimientos/dominio/movimiento.py)."""
+    if falta_importe_en_soles(tx, moneda_base):
         tx.status = TxStatus.por_revisar
 
 

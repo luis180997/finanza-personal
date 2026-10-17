@@ -101,6 +101,28 @@ class Transaction(SQLModel, table=True):
     )
 
 
+class ImportBatch(SQLModel, table=True):
+    """Una importacion del Excel historico, que trajo los datos hasta el 31/08/2026.
+
+    El importador se retiro el 17/10/2026: el Excel ya estaba entero dentro y desde
+    setiembre la fuente de verdad son los correos y lo que registras a mano. La tabla
+    se queda porque los movimientos que entraron por el apuntan a su lote
+    (`Transaction.import_batch_id`).
+    """
+
+    __tablename__ = "import_batch"
+
+    id: int | None = Field(default=None, primary_key=True)
+    filename: str
+    sheet: str
+    rows_read: int = 0
+    created_count: int = 0
+    duplicated_count: int = 0
+    date_from: date | None = None
+    date_to: date | None = None
+    created_at: datetime = Field(default_factory=utcnow)
+
+
 class TransactionPapelera(SQLModel, table=True):
     """Copia de cada movimiento borrado, sea quien sea quien lo borre.
 

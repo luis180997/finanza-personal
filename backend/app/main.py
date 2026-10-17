@@ -2,7 +2,7 @@
 
 La app esta hecha de modulos con arquitectura hexagonal (puertos y adaptadores):
 
-    clasificacion  movimientos  correo  excel  analitica  seguimiento  inversiones
+    clasificacion  movimientos  correo  analitica  seguimiento  inversiones
     cada uno con dominio/ (reglas puras), aplicacion/ (casos de uso y puertos)
     y adaptadores/ (entrada: HTTP; salida: SQLite, IMAP/Gmail, Excel...)
 
@@ -20,12 +20,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 from app.analitica.adaptadores.entrada import http as analitica_http
 from app.clasificacion.adaptadores.entrada import http as clasificacion_http
 from app.compartido.errores import ErrorDeNegocio
 from app.correo.adaptadores.entrada import http as correo_http
-from app.excel.adaptadores.entrada import http as excel_http
 from app.inversiones.adaptadores.entrada import http as inversiones_http
 from app.movimientos.adaptadores.entrada import http as movimientos_http
 from app.plataforma import arranque, programador
@@ -37,6 +37,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-7s %(name)s  %(message)s",
 )
+log = logging.getLogger("finanzas")
 
 
 @asynccontextmanager
@@ -83,11 +84,35 @@ async def _error_de_negocio(_: Request, exc: ErrorDeNegocio) -> JSONResponse:
     return JSONResponse(status_code=exc.estado_http, content={"detail": exc.mensaje})
 
 
+def explicar_rechazo(exc: IntegrityError) -> str:
+    """Por que la base rechazo el cambio, dicho para quien usa la app."""
+    detalle = str(exc.orig)
+    if detalle.startswith("Movimiento protegido"):
+        return detalle                 # el del trigger (plataforma/db.py) ya lo explica
+    if "FOREIGN KEY" in detalle:
+        return (
+            "No se pudo guardar: apunta a algo que no existe, o hay otros datos que "
+            "todavia lo usan."
+        )
+    if "UNIQUE" in detalle:
+        return "No se pudo guardar: ya existe un registro igual."
+    return f"No se pudo guardar: la base de datos lo rechazo ({detalle})."
+
+
+@app.exception_handler(IntegrityError)
+async def _choque_con_otros_datos(_: Request, exc: IntegrityError) -> JSONResponse:
+    """Red de seguridad. Un caso de uso que no comprobo antes una clave foranea o un
+    valor repetido llegaba hasta la base, y la API respondia un 500 sin explicacion.
+    Los casos conocidos tienen su propio mensaje en su caso de uso; esto cubre los
+    que falten, y deja la causa en el log para poder anadir el suyo."""
+    log.warning("la base rechazo un cambio: %s", exc.orig)
+    return JSONResponse(status_code=409, content={"detail": explicar_rechazo(exc)})
+
+
 for router in (
     clasificacion_http.router,
     movimientos_http.router,
     analitica_http.router,
-    excel_http.router,
     correo_http.router,
     plataforma_http.router,
     seguimiento_http.router,

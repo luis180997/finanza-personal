@@ -16,7 +16,6 @@ from app.movimientos.adaptadores.salida.sqlite import (
     PapeleraSqlite,
 )
 from app.movimientos.aplicacion.cuentas import ServicioCuentas
-from app.movimientos.aplicacion.lotes import ServicioLotes
 from app.movimientos.aplicacion.movimientos import ServicioMovimientos
 from app.movimientos.aplicacion.papelera import ServicioPapelera
 from app.movimientos.aplicacion.registro import RegistroDeMovimientos
@@ -35,6 +34,7 @@ def movimientos(session: Session) -> ServicioMovimientos:
         clasificador=clasificacion.clasificador(session),
         uow=UnidadDeTrabajoSqlite(session),
         zona=ZoneInfo(settings.timezone),
+        moneda_base=settings.base_currency,
     )
 
 
@@ -46,10 +46,6 @@ def papelera(session: Session) -> ServicioPapelera:
     return ServicioPapelera(
         PapeleraSqlite(session), MovimientosSqlite(session), UnidadDeTrabajoSqlite(session),
     )
-
-
-def lotes(session: Session) -> ServicioLotes:
-    return ServicioLotes(MovimientosSqlite(session), UnidadDeTrabajoSqlite(session))
 
 
 def registro(session: Session) -> RegistroDeMovimientos:
