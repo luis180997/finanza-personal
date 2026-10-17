@@ -127,7 +127,25 @@ def aporte_mensual(flujos: list[tuple[date, int]], hoy: date) -> float:
     """Lo que entro de media cada mes en el ultimo anio (neto de retiros), en centavos.
     Es el punto de partida de la proyeccion."""
     desde = hoy - timedelta(days=365)
-    return sum(c for d, c in flujos if desde < d <= hoy) / 12
+    return sum(c for d, c in flujos if desde < d <= hoy) / meses_de_aporte(flujos, hoy)
+
+
+def meses_de_aporte(flujos: list[tuple[date, int]], hoy: date) -> int:
+    """Entre cuantos meses se reparte lo aportado: 12, salvo que la cuenta tenga menos
+    de un anio. Repartir siempre entre 12 hacia que cinco meses de 400 dolares dieran
+    una media de 167.
+
+    Cuentan los meses desde el del primer aporte hasta el actual, este solo si ya tuvo
+    aporte: el dia 10 de un mes en que aun no has depositado no es un mes sin aportar.
+    """
+    fechas = [d for d, c in flujos if c and d <= hoy]
+    if not fechas or min(fechas) <= hoy - timedelta(days=365):
+        return 12
+    primera = min(fechas)
+    meses = (hoy.year - primera.year) * 12 + hoy.month - primera.month + 1
+    if not any((d.year, d.month) == (hoy.year, hoy.month) for d in fechas):
+        meses -= 1
+    return max(1, min(12, meses))
 
 
 def xirr(flujos: list[tuple[date, int]]) -> float | None:

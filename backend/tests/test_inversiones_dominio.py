@@ -262,6 +262,20 @@ def test_aporte_mensual_es_la_media_del_ultimo_anio_neta_de_retiros():
     assert metricas.aporte_mensual(flujos, date(2026, 10, 9)) == (120000 + 60000 - 36000) / 12
 
 
+def test_aporte_mensual_con_menos_de_un_anio_se_reparte_entre_los_meses_que_lleva():
+    """Repartir siempre entre 12 daba 167 dolares de media a cinco meses de 400."""
+    cada_dia_1 = [(date(2026, m, 1), 40000) for m in (6, 7, 8, 9, 10)]
+    assert metricas.aporte_mensual(cada_dia_1, date(2026, 10, 16)) == 40000
+
+    # Deposita el 25: el 16 de octubre aun no toco, octubre no cuenta todavia
+    cada_dia_25 = [(date(2026, m, 25), 40000) for m in (6, 7, 8, 9)]
+    assert metricas.aporte_mensual(cada_dia_25, date(2026, 10, 16)) == 40000
+
+    # El primer deposito, este mismo mes
+    assert metricas.aporte_mensual([(date(2026, 10, 2), 40000)], date(2026, 10, 16)) == 40000
+    assert metricas.aporte_mensual([], date(2026, 10, 16)) == 0
+
+
 def test_serie_diaria_usa_el_ultimo_precio_conocido():
     ops = [op(T.deposito, date(2026, 8, 3), 100000, simbolo=None),
            op(T.compra, date(2026, 8, 4), -50000, cantidad=1_000_000, precio=500_000_000)]
