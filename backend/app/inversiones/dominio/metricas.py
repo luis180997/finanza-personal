@@ -132,8 +132,8 @@ def aporte_mensual(flujos: list[tuple[date, int]], hoy: date) -> float:
 
 def meses_de_aporte(flujos: list[tuple[date, int]], hoy: date) -> int:
     """Entre cuantos meses se reparte lo aportado: 12, salvo que la cuenta tenga menos
-    de un anio. Repartir siempre entre 12 hacia que cinco meses de 400 dolares dieran
-    una media de 167.
+    de un anio. Repartir siempre entre 12 hacia que cinco meses de 250 dolares dieran
+    una media de 104.
 
     Cuentan los meses desde el del primer aporte hasta el actual, este solo si ya tuvo
     aporte: el dia 10 de un mes en que aun no has depositado no es un mes sin aportar.
