@@ -128,7 +128,14 @@ class ServicioCatalogo:
     def listar_reglas(self) -> list[Rule]:
         return self.reglas.por_prioridad()
 
+    def _exigir_categoria_destino(self, cat_id: int | None) -> None:
+        """Una categoria destino que no existe rompia la clave foranea al guardar y la
+        API devolvia un 500 sin explicacion."""
+        if cat_id is not None and not self.categorias.obtener(cat_id):
+            raise NoEncontrado(f"La categoria {cat_id} no existe")
+
     def crear_regla(self, payload: dict) -> Rule:
+        self._exigir_categoria_destino(payload.get("set_category_id"))
         payload["min_amount_cents"] = (
             to_cents(payload.pop("min_amount")) if payload.get("min_amount") else None
         )
@@ -147,6 +154,7 @@ class ServicioCatalogo:
         regla = self.reglas.obtener(regla_id)
         if not regla:
             raise NoEncontrado("Regla no encontrada")
+        self._exigir_categoria_destino(payload.get("set_category_id"))
         if "min_amount" in payload:
             regla.min_amount_cents = (
                 to_cents(payload.pop("min_amount")) if payload["min_amount"] else None
