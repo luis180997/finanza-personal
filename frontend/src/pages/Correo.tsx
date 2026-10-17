@@ -315,6 +315,12 @@ IMAP_PASSWORD=las16letras`}
                 <RotateCw size={15} /> Re-parsear pendientes
               </Boton>
             </div>
+            {/* Por ejemplo, que la sincronizacion automatica ya este leyendo el correo. */}
+            {(sincronizar.isError || reparsear.isError) && (
+              <p className="mt-2 text-sm" style={{ color: "var(--texto-malo)" }}>
+                {((sincronizar.error ?? reparsear.error) as Error).message}
+              </p>
+            )}
             <p className="mt-2 text-xs text-[var(--tinta-3)]">
               Re-parsear vuelve a intentar los correos ya descargados. Uselo despues de
               editar <code>patterns.yaml</code>; no vuelve a bajar nada de Gmail.

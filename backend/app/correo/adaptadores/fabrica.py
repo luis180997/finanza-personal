@@ -1,6 +1,9 @@
 """Monta los casos de uso de correo con sus adaptadores."""
 from __future__ import annotations
 
+import threading
+from collections.abc import Iterator
+from contextlib import contextmanager
 from zoneinfo import ZoneInfo
 
 from sqlmodel import Session
@@ -11,6 +14,23 @@ from app.correo.adaptadores.salida.sqlite import ArchivoSqlite, EstadoKv, Titula
 from app.correo.aplicacion.sincronizacion import AjustesDeCorreo, ServicioSincronizacion
 from app.plataforma.config import settings
 from app.plataforma.db import UnidadDeTrabajoSqlite
+
+# La app corre en un solo proceso (un worker, ver Dockerfile): basta un cerrojo en
+# memoria. Sin el, pulsar "Sincronizar" mientras corria la automatica leia los mismos
+# correos a la vez: chocaban en las claves unicas y uno de los dos acababa anotando
+# "es el mismo que ya trajo otro correo" en un correo que no lo era.
+_LEYENDO = threading.Lock()
+
+
+@contextmanager
+def en_exclusiva() -> Iterator[bool]:
+    """True si se obtuvo el turno; False si ya habia otra lectura del correo en curso."""
+    libre = _LEYENDO.acquire(blocking=False)
+    try:
+        yield libre
+    finally:
+        if libre:
+            _LEYENDO.release()
 
 
 def patrones() -> PatronesYaml:

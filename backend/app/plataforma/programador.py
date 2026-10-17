@@ -21,12 +21,15 @@ log = logging.getLogger("finanzas")
 def _sincronizar_correo() -> None:
     from app.correo.adaptadores import fabrica as correo
 
-    with Session(engine) as s:
-        r = correo.sincronizador(s).sincronizar()
-        log.info(
-            "sync automatica: %s correos, %s movimientos nuevos",
-            r.correos_leidos, r.transacciones_creadas,
-        )
+    with correo.en_exclusiva() as libre:
+        if not libre:                # alguien pulso "Sincronizar": ya lo esta haciendo
+            return
+        with Session(engine) as s:
+            r = correo.sincronizador(s).sincronizar()
+            log.info(
+                "sync automatica: %s correos, %s movimientos nuevos",
+                r.correos_leidos, r.transacciones_creadas,
+            )
 
 
 def _correos_hapi() -> None:

@@ -159,12 +159,21 @@ def desconectar():
     return {"autorizado": False}
 
 
+_OCUPADO = (
+    "Ya hay una lectura del correo en curso (quiza la automatica). Vuelve a intentarlo "
+    "en unos segundos."
+)
+
+
 @router.post("/gmail/sincronizar", response_model=SyncOut, tags=["gmail"])
 def sincronizar(
     datos: SyncIn | None = None, servicio: ServicioSincronizacion = Depends(_sincronizador),
 ):
     datos = datos or SyncIn()
-    resultado = servicio.sincronizar(dias=datos.dias, max_correos=datos.max_correos)
+    with fabrica.en_exclusiva() as libre:
+        if not libre:
+            raise HTTPException(409, _OCUPADO)
+        resultado = servicio.sincronizar(dias=datos.dias, max_correos=datos.max_correos)
     return SyncOut(**resultado.__dict__)
 
 
@@ -172,7 +181,10 @@ def sincronizar(
 def reparsear(servicio: ServicioSincronizacion = Depends(_sincronizador)):
     """Re-procesa los correos archivados que quedaron sin parser.
     Uselo despues de tocar patterns.yaml."""
-    resultado = servicio.reparsear_pendientes()
+    with fabrica.en_exclusiva() as libre:
+        if not libre:
+            raise HTTPException(409, _OCUPADO)
+        resultado = servicio.reparsear_pendientes()
     return SyncOut(**resultado.__dict__)
 
 
